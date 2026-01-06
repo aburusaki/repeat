@@ -4,23 +4,29 @@ import { Category, Sentence } from '../types';
 
 /**
  * Safely access environment variables.
- * In many build environments (like Vite or Vercel's default builders), 
- * process.env is shimmed, but in raw browser ESM it is not.
+ * In this environment, secrets are injected into process.env.
  */
 const getEnv = (key: string): string | undefined => {
   try {
     // @ts-ignore
-    return (typeof process !== 'undefined' && process.env) ? process.env[key] : undefined;
-  } catch {
-    return undefined;
+    if (typeof process !== 'undefined' && process.env && process.env[key]) {
+      return process.env[key];
+    }
+    // Fix: Casting import.meta to any to bypass the TypeScript error for .env
+    const meta = import.meta as any;
+    if (typeof meta !== 'undefined' && meta.env && meta.env[key]) {
+      return meta.env[key];
+    }
+  } catch (e) {
+    console.error(`Error accessing environment variable ${key}:`, e);
   }
+  return undefined;
 };
 
 const SUPABASE_URL = getEnv('REPEAT_SUPABASE_URL') || 'https://your-project.supabase.co';
 const SUPABASE_KEY = getEnv('REPEAT_SUPABASE_ANON_KEY') || 'your-anon-key';
 
-// Initialize Supabase. Note: if URL is the placeholder, requests will simply fail/fallback 
-// rather than crashing the whole JS runtime.
+// Initialize Supabase client
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const STORAGE_KEY = 'zen_sentences_cache';
@@ -38,85 +44,144 @@ const DEFAULT_SENTENCES = [
 
 export const supabaseService = {
   /**
-   * Syncs everything from Supabase to LocalStorage with partial failure support
+   * Checks if the client is using real credentials or placeholders.
+   */
+  isConfigured(): boolean {
+    const isDefault = SUPABASE_URL.includes('your-project') || SUPABASE_KEY.includes('your-anon-key');
+    return !isDefault;
+  },
+
+  /**
+   * Tests the connection and returns a diagnostic message.
+   */
+  async testConnection(): Promise<{ success: boolean; message: string }> {
+    if (!this.isConfigured()) {
+      return { 
+        success: false, 
+        message: "Supabase credentials missing. Please set REPEAT_SUPABASE_URL and REPEAT_SUPABASE_ANON_KEY in project secrets." 
+      };
+    }
+    try {
+      // Test by querying categories - needs SELECT policy
+      const { data, error } = await supabase.from('categories').select('id').limit(1);
+      if (error) throw error;
+      return { success: true, message: "Connected to Supabase successfully." };
+    } catch (e: any) {
+      console.error("Supabase Connection Test Failed:", e);
+      return { success: false, message: `DB Error: ${e.message || 'Check your URL and API Key.'}` };
+    }
+  },
+
+  /**
+   * Syncs everything from Supabase to LocalStorage.
    */
   async syncData(): Promise<void> {
-    // Ensure we don't try to sync if keys are obviously placeholders
-    if (SUPABASE_URL.includes('your-project')) {
-      console.info("Supabase URL not configured, skipping sync and using defaults.");
+    if (!this.isConfigured()) {
       if (!localStorage.getItem(STORAGE_KEY)) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SENTENCES.map((text, i) => ({ id: i, text }))));
       }
       return;
     }
 
-    // 1. Sync Categories independently
     try {
-      const { data: catData, error: catError } = await supabase.from('categories').select('*');
-      if (catError) {
-        console.warn("Categories sync failed:", catError.message);
-      } else if (catData) {
-        localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(catData));
+      console.log("Syncing data from Supabase...");
+      
+      const [catsRes, sentsRes] = await Promise.all([
+        supabase.from('categories').select('*').order('name'),
+        supabase.from('sentences').select('id, text').order('created_at', { ascending: false })
+      ]);
+
+      if (catsRes.error) {
+        console.error("Category Sync Error:", catsRes.error.message);
+      } else if (catsRes.data) {
+        localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(catsRes.data));
       }
+
+      if (sentsRes.error) {
+        console.error("Sentence Sync Error:", sentsRes.error.message);
+      } else if (sentsRes.data && sentsRes.data.length > 0) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sentsRes.data));
+      } else if (sentsRes.data && sentsRes.data.length === 0) {
+        // If DB is empty, keep defaults but clear cache
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+      }
+      
+      console.log("Sync complete.");
+    } catch (e) {
+      console.error("Critical sync error:", e);
+    }
+  },
+
+  async addCategory(name: string): Promise<{ data: Category | null; error: string | null }> {
+    if (!this.isConfigured()) return { data: null, error: "Database not configured." };
+    
+    try {
+      console.log(`Adding category: ${name}`);
+      const { data, error } = await supabase
+        .from('categories')
+        .insert([{ name }])
+        .select();
+      
+      if (error) {
+        console.error("Add Category Failed:", error);
+        return { data: null, error: error.message };
+      }
+      
+      console.log("Category added successfully:", data);
+      await this.syncData(); 
+      return { data: data?.[0] || null, error: null };
     } catch (e: any) {
-      console.error("Unexpected error syncing categories:", e.message || e);
+      return { data: null, error: e.message || "Unexpected error." };
     }
+  },
 
-    // 2. Sync Sentences independently
+  async addSentence(text: string, categoryIds: (string | number)[]): Promise<{ success: boolean; error: string | null }> {
+    if (!this.isConfigured()) return { success: false, error: "Database not configured." };
+
     try {
-      const { data: sentData, error: sentError } = await supabase
+      console.log(`Adding sentence: "${text}" with categories:`, categoryIds);
+      
+      // 1. Insert the sentence
+      const { data: sentence, error: sError } = await supabase
         .from('sentences')
-        .select(`
-          id,
-          text,
-          categories (id, name)
-        `);
-
-      if (sentError) {
-        console.warn("Rich sentences sync failed, trying simple fetch.");
-        const { data: simpleData, error: simpleError } = await supabase.from('sentences').select('id, text');
-        if (simpleError) throw simpleError;
-        if (simpleData) localStorage.setItem(STORAGE_KEY, JSON.stringify(simpleData));
-      } else if (sentData && sentData.length > 0) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(sentData));
-      } else {
-        if (!localStorage.getItem(STORAGE_KEY)) {
-           localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SENTENCES.map((text, i) => ({ id: i, text }))));
-        }
+        .insert([{ text }])
+        .select();
+      
+      if (sError) {
+        console.error("Sentence insert error:", sError);
+        return { success: false, error: sError.message };
       }
-    } catch (err: any) {
-      console.warn("Supabase sentences sync failed, using default data fallback.", err.message || err);
-      if (!localStorage.getItem(STORAGE_KEY)) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SENTENCES.map((text, i) => ({ id: i, text }))));
+
+      if (!sentence || sentence.length === 0) {
+        return { success: false, error: "Sentence saved but no data returned. Check RLS SELECT policy." };
       }
-    }
-  },
-
-  async addCategory(name: string): Promise<Category | null> {
-    try {
-      const { data, error } = await supabase.from('categories').insert([{ name }]).select();
-      if (error) return null;
-      await this.syncData();
-      return data?.[0] || null;
-    } catch {
-      return null;
-    }
-  },
-
-  async addSentence(text: string, categoryIds: (string | number)[]): Promise<boolean> {
-    try {
-      const { data: sentence, error: sError } = await supabase.from('sentences').insert([{ text }]).select();
-      if (sError || !sentence) return false;
 
       const sentenceId = sentence[0].id;
-      if (categoryIds.length > 0) {
-        const links = categoryIds.map(catId => ({ sentence_id: sentenceId, category_id: catId }));
-        await supabase.from('sentence_categories').insert(links);
+      console.log(`Sentence created with ID: ${sentenceId}`);
+
+      // 2. Link to categories if any selected
+      if (categoryIds && categoryIds.length > 0) {
+        const links = categoryIds.map(catId => ({ 
+          sentence_id: sentenceId, 
+          category_id: catId 
+        }));
+        
+        console.log("Linking to categories...", links);
+        const { error: lError } = await supabase
+          .from('sentence_categories')
+          .insert(links);
+
+        if (lError) {
+          console.error("Link Category Error:", lError);
+          return { success: true, error: `Sentence saved, but failed to link categories: ${lError.message}` };
+        }
       }
+      
       await this.syncData();
-      return true;
-    } catch {
-      return false;
+      return { success: true, error: null };
+    } catch (e: any) {
+      console.error("Unhandled Add Sentence Error:", e);
+      return { success: false, error: e.message || "An unexpected error occurred." };
     }
   },
 
@@ -132,8 +197,13 @@ export const supabaseService = {
   getRandomSentence(): string {
     try {
       const cached = localStorage.getItem(STORAGE_KEY);
-      const sentences: Sentence[] = cached ? JSON.parse(cached) : DEFAULT_SENTENCES.map((text, i) => ({ id: i, text }));
-      if (!sentences || sentences.length === 0) return DEFAULT_SENTENCES[0];
+      const sentences: Sentence[] = cached ? JSON.parse(cached) : [];
+      
+      // If we have local DB sentences, use them. Otherwise defaults.
+      if (!sentences || sentences.length === 0) {
+        return DEFAULT_SENTENCES[Math.floor(Math.random() * DEFAULT_SENTENCES.length)];
+      }
+      
       const randomIndex = Math.floor(Math.random() * sentences.length);
       return sentences[randomIndex].text;
     } catch {
