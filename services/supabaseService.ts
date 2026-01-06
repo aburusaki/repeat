@@ -2,11 +2,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Category, Sentence } from '../types';
 
-/**
- * Supabase configuration with hardcoded credentials provided by the user.
- */
 const getSupabaseConfig = () => {
-  // 1. Try LocalStorage override first (Manual bypass if needed)
   const manualUrl = localStorage.getItem('SB_OVERRIDE_URL');
   const manualKey = localStorage.getItem('SB_OVERRIDE_KEY');
   
@@ -14,11 +10,9 @@ const getSupabaseConfig = () => {
     return { url: manualUrl, key: manualKey, isManual: true };
   }
 
-  // 2. Hardcoded values provided by the user for direct connection
   const HARDCODED_URL = 'https://irmnoqctkoaepeamzfgt.supabase.co';
   const HARDCODED_KEY = 'sb_publishable_jm-zZS8c3Vsuy0l6D2dJdw_1J-IW4kj';
 
-  // 3. Fallback to environment variables using the user's successful pattern
   const envUrl = 
     // @ts-ignore
     process.env.SUPABASE_URL || (window as any).process?.env?.SUPABASE_URL || 
@@ -44,8 +38,6 @@ let supabaseClient: SupabaseClient | null = null;
 export const supabaseService = {
   getClient(): SupabaseClient {
     const config = getSupabaseConfig();
-    
-    // Initialize or re-initialize if the URL or Key has changed
     if (!supabaseClient || (supabaseClient as any).supabaseUrl !== config.url) {
       supabaseClient = createClient(
         config.url || 'https://placeholder-project.supabase.co', 
@@ -53,19 +45,6 @@ export const supabaseService = {
       );
     }
     return supabaseClient;
-  },
-
-  setManualConfig(url: string, key: string) {
-    localStorage.setItem('SB_OVERRIDE_URL', url);
-    localStorage.setItem('SB_OVERRIDE_KEY', key);
-    // Reset client cache
-    supabaseClient = null;
-  },
-
-  clearManualConfig() {
-    localStorage.removeItem('SB_OVERRIDE_URL');
-    localStorage.removeItem('SB_OVERRIDE_KEY');
-    supabaseClient = null;
   },
 
   getDebugInfo() {
@@ -82,21 +61,17 @@ export const supabaseService = {
 
   isConfigured(): boolean {
     const { url, key } = getSupabaseConfig();
-    // Basic validation: check if a URL exists and is not the placeholder
     return !!(url && key && url.includes('supabase.co'));
   },
 
   async testConnection(): Promise<{ success: boolean; message: string }> {
-    if (!this.isConfigured()) {
-      return { success: false, message: "Configuration missing or invalid." };
-    }
+    if (!this.isConfigured()) return { success: false, message: "Configuration missing." };
     try {
-      // Simple query to test the connection to the database
       const { error } = await this.getClient().from('categories').select('id').limit(1);
       if (error) throw error;
-      return { success: true, message: "Connected successfully!" };
+      return { success: true, message: "Connected!" };
     } catch (e: any) {
-      return { success: false, message: e.message || "Connection failed. Check your Supabase project settings." };
+      return { success: false, message: e.message || "Failed." };
     }
   },
 
@@ -106,12 +81,40 @@ export const supabaseService = {
       const client = this.getClient();
       const [cats, sents] = await Promise.all([
         client.from('categories').select('*').order('name'),
-        client.from('sentences').select('id, text').order('created_at', { ascending: false })
+        client.from('sentences').select('*, categories:sentence_categories(category_id)').order('created_at', { ascending: false })
       ]);
       if (cats.data) localStorage.setItem('zen_categories_cache', JSON.stringify(cats.data));
       if (sents.data) localStorage.setItem('zen_sentences_cache', JSON.stringify(sents.data));
     } catch (e) {
-      console.error("Sync failed:", e);
+      console.error("Sync error:", e);
+    }
+  },
+
+  async getSentences(): Promise<Sentence[]> {
+    if (!this.isConfigured()) return [];
+    try {
+      // Fetch sentences with their associated category IDs
+      const { data, error } = await this.getClient()
+        .from('sentences')
+        .select(`
+          id, 
+          text, 
+          sentence_categories (
+            category_id
+          )
+        `)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      return (data || []).map((s: any) => ({
+        id: s.id,
+        text: s.text,
+        categoryIds: s.sentence_categories.map((sc: any) => sc.category_id)
+      }));
+    } catch (e) {
+      console.error("Fetch sentences error:", e);
+      return [];
     }
   },
 
@@ -132,11 +135,42 @@ export const supabaseService = {
       const { data: sentence, error: sError } = await client.from('sentences').insert([{ text }]).select();
       if (sError) return { success: false, error: sError.message };
       
-      if (sentence && sentence[0] && categoryIds.length > 0) {
+      if (sentence?.[0] && categoryIds.length > 0) {
         const links = categoryIds.map(catId => ({ sentence_id: sentence[0].id, category_id: catId }));
         await client.from('sentence_categories').insert(links);
       }
       
+      await this.syncData();
+      return { success: true, error: null };
+    } catch (e: any) { return { success: false, error: e.message }; }
+  },
+
+  async updateSentence(id: string | number, text: string, categoryIds: (string | number)[]): Promise<{ success: boolean; error: string | null }> {
+    if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
+    try {
+      const client = this.getClient();
+      
+      // Update sentence text
+      const { error: sError } = await client.from('sentences').update({ text }).eq('id', id);
+      if (sError) return { success: false, error: sError.message };
+      
+      // Update categories: delete old associations and insert new ones
+      await client.from('sentence_categories').delete().eq('sentence_id', id);
+      if (categoryIds.length > 0) {
+        const links = categoryIds.map(catId => ({ sentence_id: id, category_id: catId }));
+        await client.from('sentence_categories').insert(links);
+      }
+      
+      await this.syncData();
+      return { success: true, error: null };
+    } catch (e: any) { return { success: false, error: e.message }; }
+  },
+
+  async deleteSentence(id: string | number): Promise<{ success: boolean; error: string | null }> {
+    if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
+    try {
+      const { error } = await this.getClient().from('sentences').delete().eq('id', id);
+      if (error) return { success: false, error: error.message };
       await this.syncData();
       return { success: true, error: null };
     } catch (e: any) { return { success: false, error: e.message }; }
@@ -152,7 +186,7 @@ export const supabaseService = {
   getRandomSentence(): string {
     try {
       const cached = localStorage.getItem('zen_sentences_cache');
-      const sentences: Sentence[] = cached ? JSON.parse(cached) : [];
+      const sentences: any[] = cached ? JSON.parse(cached) : [];
       if (sentences.length === 0) return "Adopt the pace of nature: her secret is patience.";
       return sentences[Math.floor(Math.random() * sentences.length)].text;
     } catch { return "True peace comes from within."; }

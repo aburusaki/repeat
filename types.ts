@@ -8,6 +8,7 @@ export interface Sentence {
   id: string | number;
   text: string;
   categories?: Category[];
+  categoryIds?: (string | number)[];
 }
 
 export interface AppState {
