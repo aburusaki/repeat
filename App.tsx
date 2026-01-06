@@ -31,7 +31,7 @@ const App: React.FC = () => {
     return statsService.getSentenceCount(currentSentence);
   }, [currentSentence, currentNumber]);
 
-  const generateRandomLimit = () => Math.floor(Math.random() * 3) + 1;
+  const generateRandomLimit = () => Math.floor(Math.random() * 1) + 1;
 
   const loadData = useCallback(async () => {
     setIsSyncing(true);
