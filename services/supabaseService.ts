@@ -183,11 +183,35 @@ export const supabaseService = {
     } catch { return []; }
   },
 
-  getRandomSentence(): string {
+  getRandomSentence(filterCategoryId?: string | number | 'all'): string {
     try {
       const cached = localStorage.getItem('zen_sentences_cache');
-      const sentences: any[] = cached ? JSON.parse(cached) : [];
-      if (sentences.length === 0) return "Adopt the pace of nature: her secret is patience.";
+      let sentences: any[] = cached ? JSON.parse(cached) : [];
+      
+      if (filterCategoryId && filterCategoryId !== 'all') {
+        sentences = sentences.filter(s => {
+          // If synced structure has categories array
+          if (s.categories) {
+            return s.categories.some((c: any) => c.category_id === filterCategoryId);
+          }
+          // If structure from getSentences() was used
+          if (s.sentence_categories) {
+            return s.sentence_categories.some((sc: any) => sc.category_id === filterCategoryId);
+          }
+          // Fallback if we just have categoryIds mapped locally
+          if (s.categoryIds) {
+            return s.categoryIds.includes(filterCategoryId);
+          }
+          return false;
+        });
+      }
+
+      if (sentences.length === 0) {
+        return filterCategoryId && filterCategoryId !== 'all' 
+          ? "This theme awaits your wisdom. Add a sentence to begin." 
+          : "Adopt the pace of nature: her secret is patience.";
+      }
+      
       return sentences[Math.floor(Math.random() * sentences.length)].text;
     } catch { return "True peace comes from within."; }
   }

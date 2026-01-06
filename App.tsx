@@ -14,7 +14,8 @@ const App: React.FC = () => {
   const [showManage, setShowManage] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
   
-  const [dbStatus, setDbStatus] = useState<{ connected: boolean; message: string }>({ connected: false, message: 'Checking...' });
+  // Session-level filter
+  const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
 
   const [newCategory, setNewCategory] = useState('');
   const [newSentenceText, setNewSentenceText] = useState('');
@@ -24,16 +25,16 @@ const App: React.FC = () => {
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [editForm, setEditForm] = useState<{ text: string; categoryIds: (string | number)[] }>({ text: '', categoryIds: [] });
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterCategoryId, setFilterCategoryId] = useState<string | number | 'all'>('all');
 
   // Real-time stat for current sentence
   const todayClickCount = useMemo(() => {
     return statsService.getSentenceCount(currentSentence);
-  }, [currentSentence, currentNumber]); // Re-calc on every number change/click
+  }, [currentSentence, currentNumber]);
 
   const loadData = useCallback(async () => {
     setIsSyncing(true);
     const status = await supabaseService.testConnection();
-    setDbStatus({ connected: status.success, message: status.message });
     if (status.success) {
       await supabaseService.syncData();
       const [cats, sents] = await Promise.all([
@@ -49,16 +50,22 @@ const App: React.FC = () => {
   useEffect(() => {
     statsService.pruneStats();
     loadData().then(() => {
-      // Initialize based on mode
       setCurrentNumber(counterMode === 'down' ? 7 : 1);
-      setCurrentSentence(supabaseService.getRandomSentence());
+      setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
     });
   }, [loadData]);
+
+  // Handle session focus change
+  const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
+    e.stopPropagation();
+    setSessionFocusId(id);
+    setCurrentSentence(supabaseService.getRandomSentence(id));
+    setCurrentNumber(counterMode === 'down' ? 7 : 1);
+  };
 
   const handleInteraction = useCallback(() => {
     if (isAnimating || isSyncing || showStats || showManage) return;
     
-    // Record click for the current active sentence
     if (currentSentence) {
       statsService.recordClick(currentSentence);
     }
@@ -69,13 +76,13 @@ const App: React.FC = () => {
       setCurrentNumber(prev => {
         if (counterMode === 'down') {
           if (prev <= 1) {
-            setCurrentSentence(supabaseService.getRandomSentence());
+            setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
             return 7;
           }
           return prev - 1;
         } else {
           if (prev >= 7) {
-            setCurrentSentence(supabaseService.getRandomSentence());
+            setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
             return 1;
           }
           return prev + 1;
@@ -83,7 +90,7 @@ const App: React.FC = () => {
       });
       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, isSyncing, showStats, showManage, currentSentence, counterMode]);
+  }, [isAnimating, isSyncing, showStats, showManage, currentSentence, counterMode, sessionFocusId]);
 
   const toggleMode = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -148,8 +155,12 @@ const App: React.FC = () => {
   };
 
   const filteredSentences = useMemo(() => {
-    return allSentences.filter(s => s.text.toLowerCase().includes(searchTerm.toLowerCase()));
-  }, [allSentences, searchTerm]);
+    return allSentences.filter(s => {
+      const matchesSearch = s.text.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesCategory = filterCategoryId === 'all' || (s.categoryIds || []).includes(filterCategoryId);
+      return matchesSearch && matchesCategory;
+    });
+  }, [allSentences, searchTerm, filterCategoryId]);
 
   return (
     <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 overflow-hidden">
@@ -195,7 +206,6 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-8 md:p-12">
               {activeTab === 'create' ? (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
-                  {/* Category Management */}
                   <section className="space-y-8">
                     <div>
                       <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.3em] mb-6">Create Categories</h3>
@@ -211,7 +221,6 @@ const App: React.FC = () => {
                     </div>
                   </section>
 
-                  {/* Add Sentence */}
                   <section className="space-y-8">
                     <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.3em] mb-6">New Sentence</h3>
                     <form onSubmit={handleAddSentence} className="space-y-8">
@@ -234,7 +243,7 @@ const App: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-8">
-                  <div className="flex gap-4 items-center mb-10">
+                  <div className="space-y-6 mb-10">
                     <div className="flex-1 relative">
                       <input 
                         type="text" 
@@ -244,6 +253,27 @@ const App: React.FC = () => {
                         className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all text-sm italic font-serif"
                       />
                       <svg xmlns="http://www.w3.org/2000/svg" className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-300" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      <p className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 ml-2">Browse by Category</p>
+                      <div className="flex flex-wrap gap-2 overflow-x-auto pb-2 no-scrollbar">
+                        <button 
+                          onClick={() => setFilterCategoryId('all')}
+                          className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === 'all' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'}`}
+                        >
+                          All Entries
+                        </button>
+                        {allCategories.map(cat => (
+                          <button 
+                            key={cat.id} 
+                            onClick={() => setFilterCategoryId(cat.id)}
+                            className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === cat.id ? 'bg-slate-900 border-slate-900 text-white shadow-lg' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'}`}
+                          >
+                            {cat.name}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
@@ -325,7 +355,27 @@ const App: React.FC = () => {
       )}
 
       {/* Footer Interface */}
-      <div className={`absolute bottom-12 flex flex-col items-center gap-6 transition-all duration-700 ${showStats || showManage ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
+      <div className={`absolute bottom-8 w-full flex flex-col items-center gap-6 transition-all duration-700 ${showStats || showManage ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
+        
+        {/* Session Focus Selector */}
+        <div className="w-full max-w-xs md:max-w-md px-6 overflow-x-auto no-scrollbar flex items-center justify-center gap-4 py-2">
+            <button 
+              onClick={(e) => handleFocusChange(e, 'all')}
+              className={`text-[8px] font-black uppercase tracking-[0.3em] transition-all px-3 py-1 rounded-full whitespace-nowrap ${sessionFocusId === 'all' ? 'text-blue-600 bg-blue-50' : 'text-slate-300 hover:text-slate-500'}`}
+            >
+              All Wisdom
+            </button>
+            {allCategories.map(cat => (
+              <button 
+                key={cat.id}
+                onClick={(e) => handleFocusChange(e, cat.id)}
+                className={`text-[8px] font-black uppercase tracking-[0.3em] transition-all px-3 py-1 rounded-full whitespace-nowrap ${sessionFocusId === cat.id ? 'text-blue-600 bg-blue-50' : 'text-slate-300 hover:text-slate-500'}`}
+              >
+                {cat.name}
+              </button>
+            ))}
+        </div>
+
         <div className="flex gap-10 items-center">
           <button onClick={(e) => { e.stopPropagation(); setShowStats(true); }} className="text-slate-300 text-[10px] font-black tracking-[0.4em] uppercase hover:text-slate-900 transition-colors">Logs</button>
           
@@ -337,7 +387,7 @@ const App: React.FC = () => {
               onClick={toggleMode} 
               className="text-[8px] font-black uppercase tracking-widest text-slate-300 hover:text-blue-500 transition-colors"
             >
-              Mode: {counterMode === 'down' ? 'Descend' : 'Ascend'}
+              {counterMode === 'down' ? 'Descend' : 'Ascend'}
             </button>
           </div>
 
