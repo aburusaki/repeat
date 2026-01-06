@@ -3,109 +3,109 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Category, Sentence } from '../types';
 
 /**
- * Robust environment variable retrieval for frontend environments.
+ * Static access to environment variables.
+ * Many bundlers (Vite, Webpack, Vercel) replace these literal strings during build.
  */
-const getEnvValue = (key: string): string => {
-  try {
-    // 1. Check process.env (Standard/Node Polyfill)
-    // @ts-ignore
-    if (typeof process !== 'undefined' && process.env && process.env[key]) return process.env[key];
-    
-    // 2. Check window.process.env (Some browser polyfills)
-    // @ts-ignore
-    if (typeof window !== 'undefined' && (window as any).process?.env?.[key]) return (window as any).process.env[key];
-    
-    // 3. Check import.meta.env (Vite/Modern ESM)
-    // @ts-ignore
-    const meta = import.meta as any;
-    if (meta.env && meta.env[key]) return meta.env[key];
-    
-    // 4. Check VITE_ prefix (Common Vite requirement)
-    const viteKey = `VITE_${key}`;
-    if (meta.env && meta.env[viteKey]) return meta.env[viteKey];
-  } catch (e) {}
-  return '';
-};
-
 const getSupabaseConfig = () => {
-  // Check for both the "REPEAT_" prefixed versions and standard versions
-  const url = getEnvValue('REPEAT_SUPABASE_URL') || getEnvValue('SUPABASE_URL');
-  const key = getEnvValue('REPEAT_SUPABASE_ANON_KEY') || getEnvValue('SUPABASE_ANON_KEY');
+  // Try to get from LocalStorage first (Manual override)
+  const manualUrl = localStorage.getItem('SB_OVERRIDE_URL');
+  const manualKey = localStorage.getItem('SB_OVERRIDE_KEY');
+  
+  if (manualUrl && manualKey) {
+    return { url: manualUrl, key: manualKey };
+  }
+
+  // Attempt static access - DO NOT use dynamic [key] access as it fails in most frontend builds
+  let url = '';
+  let key = '';
+
+  try {
+    // @ts-ignore
+    url = process.env.REPEAT_SUPABASE_URL || process.env.SUPABASE_URL || process.env.VITE_REPEAT_SUPABASE_URL || '';
+    // @ts-ignore
+    key = process.env.REPEAT_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_REPEAT_SUPABASE_ANON_KEY || '';
+
+    // ESM Fallback
+    const meta = import.meta as any;
+    if (!url && meta.env) {
+      url = meta.env.REPEAT_SUPABASE_URL || meta.env.VITE_REPEAT_SUPABASE_URL || meta.env.SUPABASE_URL || '';
+      key = meta.env.REPEAT_SUPABASE_ANON_KEY || meta.env.VITE_REPEAT_SUPABASE_ANON_KEY || meta.env.SUPABASE_ANON_KEY || '';
+    }
+  } catch (e) {}
 
   return { url, key };
 };
 
-// Internal cache for the client
 let supabaseClient: SupabaseClient | null = null;
 
 export const supabaseService = {
-  /**
-   * Returns the Supabase client, initializing it if necessary.
-   */
   getClient(): SupabaseClient {
-    if (supabaseClient) return supabaseClient;
     const { url, key } = getSupabaseConfig();
-    supabaseClient = createClient(
-      url || 'https://placeholder.supabase.co', 
-      key || 'placeholder'
-    );
+    // Re-initialize if config changed or not yet created
+    if (!supabaseClient || (supabaseClient as any).supabaseUrl !== url) {
+      supabaseClient = createClient(
+        url || 'https://placeholder.supabase.co', 
+        key || 'placeholder'
+      );
+    }
     return supabaseClient;
   },
 
-  /**
-   * Diagnostic info for troubleshooting connection issues.
-   */
+  setManualConfig(url: string, key: string) {
+    localStorage.setItem('SB_OVERRIDE_URL', url);
+    localStorage.setItem('SB_OVERRIDE_KEY', key);
+    // Reset client to use new config
+    supabaseClient = null;
+  },
+
+  clearManualConfig() {
+    localStorage.removeItem('SB_OVERRIDE_URL');
+    localStorage.removeItem('SB_OVERRIDE_KEY');
+    supabaseClient = null;
+  },
+
   getDebugInfo() {
     const { url, key } = getSupabaseConfig();
-    const mask = (s: string) => s ? `${s.substring(0, 10)}...${s.substring(s.length - 4)}` : 'MISSING';
+    const isManual = !!localStorage.getItem('SB_OVERRIDE_URL');
+    const mask = (s: string) => s && s.length > 10 ? `${s.substring(0, 8)}...${s.substring(s.length - 4)}` : 'NOT FOUND';
     return {
       urlFound: !!url,
       keyFound: !!key,
       maskedUrl: mask(url),
-      maskedKey: mask(key)
+      maskedKey: mask(key),
+      isManual
     };
   },
 
   isConfigured(): boolean {
     const { url, key } = getSupabaseConfig();
-    return !!(url && key && !url.includes('placeholder') && url.length > 10);
+    return !!(url && key && url.length > 15 && !url.includes('placeholder'));
   },
 
   async testConnection(): Promise<{ success: boolean; message: string }> {
     if (!this.isConfigured()) {
-      const debug = this.getDebugInfo();
-      return { 
-        success: false, 
-        message: `Variables missing. URL: ${debug.urlFound ? 'OK' : 'MISSING'}, Key: ${debug.keyFound ? 'OK' : 'MISSING'}.` 
-      };
+      return { success: false, message: "No configuration found." };
     }
     try {
-      const client = this.getClient();
-      // Simple query to test RLS and connection
-      const { error } = await client.from('categories').select('id').limit(1);
+      const { error } = await this.getClient().from('categories').select('id').limit(1);
       if (error) throw error;
-      return { success: true, message: "Connection verified." };
+      return { success: true, message: "Connected!" };
     } catch (e: any) {
-      console.error("Supabase Connection Error:", e);
-      return { success: false, message: `Database error: ${e.message || 'Check your Supabase URL/Key.'}` };
+      return { success: false, message: e.message || "Connection failed." };
     }
   },
 
   async syncData(): Promise<void> {
     if (!this.isConfigured()) return;
-
     try {
       const client = this.getClient();
-      const [catsRes, sentsRes] = await Promise.all([
+      const [cats, sents] = await Promise.all([
         client.from('categories').select('*').order('name'),
         client.from('sentences').select('id, text').order('created_at', { ascending: false })
       ]);
-
-      if (catsRes.data) localStorage.setItem('zen_categories_cache', JSON.stringify(catsRes.data));
-      if (sentsRes.data) localStorage.setItem('zen_sentences_cache', JSON.stringify(sentsRes.data));
-    } catch (e) {
-      console.error("Sync error:", e);
-    }
+      if (cats.data) localStorage.setItem('zen_categories_cache', JSON.stringify(cats.data));
+      if (sents.data) localStorage.setItem('zen_sentences_cache', JSON.stringify(sents.data));
+    } catch (e) {}
   },
 
   async addCategory(name: string): Promise<{ data: Category | null; error: string | null }> {
@@ -115,9 +115,7 @@ export const supabaseService = {
       if (error) return { data: null, error: error.message };
       await this.syncData(); 
       return { data: data?.[0] || null, error: null };
-    } catch (e: any) {
-      return { data: null, error: e.message };
-    }
+    } catch (e: any) { return { data: null, error: e.message }; }
   },
 
   async addSentence(text: string, categoryIds: (string | number)[]): Promise<{ success: boolean; error: string | null }> {
@@ -126,17 +124,13 @@ export const supabaseService = {
       const client = this.getClient();
       const { data: sentence, error: sError } = await client.from('sentences').insert([{ text }]).select();
       if (sError) return { success: false, error: sError.message };
-      
       if (sentence && sentence[0] && categoryIds.length > 0) {
         const links = categoryIds.map(catId => ({ sentence_id: sentence[0].id, category_id: catId }));
         await client.from('sentence_categories').insert(links);
       }
-      
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) {
-      return { success: false, error: e.message };
-    }
+    } catch (e: any) { return { success: false, error: e.message }; }
   },
 
   getCategories(): Category[] {

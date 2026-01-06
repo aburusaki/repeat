@@ -11,12 +11,17 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
   const [showStats, setShowStats] = useState<boolean>(false);
   const [showManage, setShowManage] = useState<boolean>(false);
+  const [showManualForm, setShowManualForm] = useState<boolean>(false);
   const [dbStatus, setDbStatus] = useState<{ connected: boolean; message: string }>({ connected: false, message: 'Checking...' });
 
   const [newCategory, setNewCategory] = useState('');
   const [newSentenceText, setNewSentenceText] = useState('');
   const [selectedCats, setSelectedCats] = useState<(string | number)[]>([]);
   const [allCategories, setAllCategories] = useState<Category[]>([]);
+  
+  // Manual Config states
+  const [mUrl, setMUrl] = useState('');
+  const [mKey, setMKey] = useState('');
 
   const checkConnection = useCallback(async () => {
     setIsSyncing(true);
@@ -88,7 +93,14 @@ const App: React.FC = () => {
     setIsSyncing(false);
   };
 
-  const debugInfo = useMemo(() => supabaseService.getDebugInfo(), [showManage]);
+  const handleManualSave = () => {
+    if (!mUrl || !mKey) return;
+    supabaseService.setManualConfig(mUrl, mKey);
+    setShowManualForm(false);
+    checkConnection();
+  };
+
+  const debugInfo = useMemo(() => supabaseService.getDebugInfo(), [showManage, isSyncing]);
 
   return (
     <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 overflow-hidden">
@@ -118,18 +130,52 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 animate-pulse'}`}></div>
                     <span className={`text-[10px] uppercase font-black tracking-widest ${dbStatus.connected ? 'text-green-600' : 'text-red-500'}`}>
-                      {dbStatus.connected ? 'Cloud Connected' : 'Cloud Disconnected'}
+                      {dbStatus.connected ? `Live (${debugInfo.isManual ? 'Manual' : 'Env'})` : 'Cloud Disconnected'}
                     </span>
                   </div>
+                  
                   {!dbStatus.connected && (
-                    <div className="mt-4 p-4 bg-red-50 rounded-2xl border border-red-100 max-w-md">
-                      <p className="text-[10px] text-red-600 font-bold uppercase tracking-widest mb-2">Debug Diagnostic:</p>
-                      <div className="space-y-1 font-mono text-[9px] text-red-500">
-                        <p>Found URL: {debugInfo.urlFound ? 'YES' : 'NO'}</p>
-                        <p>Found Key: {debugInfo.keyFound ? 'YES' : 'NO'}</p>
-                        <p className="opacity-60 break-all">URL Detected: {debugInfo.maskedUrl}</p>
-                        <p className="mt-3 leading-relaxed">Tip: Environment variables often require a "Redeploy" or "Restart" of the preview environment to take effect.</p>
+                    <div className="mt-4 p-5 bg-red-50 rounded-2xl border border-red-100 max-w-md">
+                      <p className="text-[10px] text-red-600 font-bold uppercase tracking-widest mb-2">Setup Required:</p>
+                      <div className="space-y-3">
+                        <div className="space-y-1 font-mono text-[9px] text-red-500">
+                          <p>• {debugInfo.urlFound ? 'URL Found' : 'URL Missing'}: {debugInfo.maskedUrl}</p>
+                          <p>• {debugInfo.keyFound ? 'Key Found' : 'Key Missing'}: {debugInfo.maskedKey}</p>
+                        </div>
+                        <p className="text-[10px] text-red-700 leading-relaxed italic font-medium">
+                          1. Did you trigger a <b>Redeploy</b> on Vercel after adding variables?<br/>
+                          2. Or bypass this by entering keys manually below:
+                        </p>
+                        <button 
+                          onClick={() => setShowManualForm(!showManualForm)}
+                          className="px-3 py-1.5 bg-white border border-red-200 text-red-600 text-[9px] font-black uppercase tracking-widest rounded-lg hover:bg-red-50 transition-colors"
+                        >
+                          {showManualForm ? 'Hide Form' : 'Configure Manually'}
+                        </button>
                       </div>
+
+                      {showManualForm && (
+                        <div className="mt-4 space-y-3 p-4 bg-white rounded-xl border border-red-100">
+                          <input 
+                            type="text" 
+                            placeholder="Supabase Project URL" 
+                            value={mUrl}
+                            onChange={e => setMUrl(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-[10px] focus:outline-none focus:ring-1 focus:ring-red-200"
+                          />
+                          <input 
+                            type="password" 
+                            placeholder="Supabase Anon Key" 
+                            value={mKey}
+                            onChange={e => setMKey(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-100 rounded-lg text-[10px] focus:outline-none focus:ring-1 focus:ring-red-200"
+                          />
+                          <button 
+                            onClick={handleManualSave}
+                            className="w-full py-2 bg-red-600 text-white text-[9px] font-black uppercase tracking-widest rounded-lg"
+                          >Save to Browser Cache</button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
