@@ -6,6 +6,7 @@ import { Category, Sentence } from './types';
 
 const App: React.FC = () => {
   const [currentNumber, setCurrentNumber] = useState<number>(0);
+  const [randomLimit, setRandomLimit] = useState<number>(7); // Target/Start number for the current cycle
   const [currentSentence, setCurrentSentence] = useState<string>('');
   const [counterMode, setCounterMode] = useState<'up' | 'down'>('down');
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
@@ -32,6 +33,8 @@ const App: React.FC = () => {
     return statsService.getSentenceCount(currentSentence);
   }, [currentSentence, currentNumber]);
 
+  const generateRandomLimit = () => Math.floor(Math.random() * 10) + 1;
+
   const loadData = useCallback(async () => {
     setIsSyncing(true);
     const status = await supabaseService.testConnection();
@@ -47,11 +50,19 @@ const App: React.FC = () => {
     setIsSyncing(false);
   }, []);
 
+  const resetCycle = useCallback((mode: 'up' | 'down', focusId: string | number | 'all') => {
+    const newLimit = generateRandomLimit();
+    const newSentence = supabaseService.getRandomSentence(focusId);
+    
+    setRandomLimit(newLimit);
+    setCurrentSentence(newSentence);
+    setCurrentNumber(mode === 'down' ? newLimit : 1);
+  }, []);
+
   useEffect(() => {
     statsService.pruneStats();
     loadData().then(() => {
-      setCurrentNumber(counterMode === 'down' ? 7 : 1);
-      setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
+      resetCycle(counterMode, sessionFocusId);
     });
   }, [loadData]);
 
@@ -59,8 +70,7 @@ const App: React.FC = () => {
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
     setSessionFocusId(id);
-    setCurrentSentence(supabaseService.getRandomSentence(id));
-    setCurrentNumber(counterMode === 'down' ? 7 : 1);
+    resetCycle(counterMode, id);
   };
 
   const handleInteraction = useCallback(() => {
@@ -76,12 +86,16 @@ const App: React.FC = () => {
       setCurrentNumber(prev => {
         if (counterMode === 'down') {
           if (prev <= 1) {
+            const newLimit = generateRandomLimit();
+            setRandomLimit(newLimit);
             setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
-            return 7;
+            return newLimit;
           }
           return prev - 1;
         } else {
-          if (prev >= 7) {
+          if (prev >= randomLimit) {
+            const newLimit = generateRandomLimit();
+            setRandomLimit(newLimit);
             setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
             return 1;
           }
@@ -90,13 +104,14 @@ const App: React.FC = () => {
       });
       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, isSyncing, showStats, showManage, currentSentence, counterMode, sessionFocusId]);
+  }, [isAnimating, isSyncing, showStats, showManage, currentSentence, counterMode, sessionFocusId, randomLimit]);
 
   const toggleMode = (e: React.MouseEvent) => {
     e.stopPropagation();
     const newMode = counterMode === 'down' ? 'up' : 'down';
     setCounterMode(newMode);
-    setCurrentNumber(newMode === 'down' ? 7 : 1);
+    // Reset based on current limit but new direction
+    setCurrentNumber(newMode === 'down' ? randomLimit : 1);
   };
 
   const handleAddCategory = async (e: React.FormEvent) => {
@@ -381,7 +396,7 @@ const App: React.FC = () => {
           
           <div className="flex flex-col items-center gap-2">
             <button onClick={(e) => { e.stopPropagation(); setShowManage(true); }} className="group p-3 text-slate-300 hover:text-slate-900 transition-all rounded-full border border-slate-100 bg-white shadow-sm hover:shadow-md hover:-translate-y-0.5">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:rotate-12 transition-transform"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:rotate-12 transition-transform"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121(0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
             </button>
             <button 
               onClick={toggleMode} 
@@ -397,7 +412,7 @@ const App: React.FC = () => {
         </div>
         
         <div className="flex gap-2 items-center">
-           {[...Array(7)].map((_, i) => (
+           {[...Array(randomLimit)].map((_, i) => (
              <div 
                 key={i} 
                 className={`h-[2px] rounded-full transition-all duration-700 ease-out 
