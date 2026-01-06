@@ -6,7 +6,7 @@ import { Category, Sentence } from './types';
 
 const App: React.FC = () => {
   const [currentNumber, setCurrentNumber] = useState<number>(0);
-  const [randomLimit, setRandomLimit] = useState<number>(7); // Target/Start number for the current cycle
+  const [randomLimit, setRandomLimit] = useState<number>(7); 
   const [currentSentence, setCurrentSentence] = useState<string>('');
   const [counterMode, setCounterMode] = useState<'up' | 'down'>('down');
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
@@ -15,7 +15,6 @@ const App: React.FC = () => {
   const [showManage, setShowManage] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
   
-  // Session-level filter
   const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
 
   const [newCategory, setNewCategory] = useState('');
@@ -28,7 +27,6 @@ const App: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategoryId, setFilterCategoryId] = useState<string | number | 'all'>('all');
 
-  // Real-time stat for current sentence
   const todayClickCount = useMemo(() => {
     return statsService.getSentenceCount(currentSentence);
   }, [currentSentence, currentNumber]);
@@ -39,12 +37,8 @@ const App: React.FC = () => {
     setIsSyncing(true);
     const status = await supabaseService.testConnection();
     if (status.success) {
-      await supabaseService.syncData();
-      const [cats, sents] = await Promise.all([
-        Promise.resolve(supabaseService.getCategories()),
-        supabaseService.getSentences()
-      ]);
-      setAllCategories(cats);
+      const sents = await supabaseService.syncData();
+      setAllCategories(supabaseService.getCategories());
       setAllSentences(sents);
     }
     setIsSyncing(false);
@@ -66,7 +60,6 @@ const App: React.FC = () => {
     });
   }, [loadData]);
 
-  // Handle session focus change
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
     setSessionFocusId(id);
@@ -110,7 +103,6 @@ const App: React.FC = () => {
     e.stopPropagation();
     const newMode = counterMode === 'down' ? 'up' : 'down';
     setCounterMode(newMode);
-    // Reset based on current limit but new direction
     setCurrentNumber(newMode === 'down' ? randomLimit : 1);
   };
 
@@ -120,7 +112,7 @@ const App: React.FC = () => {
     if (!name) return;
     setIsSyncing(true);
     const { error } = await supabaseService.addCategory(name);
-    if (error) alert(`Error: ${error}`);
+    if (error) alert(`Category Error: ${error}`);
     else {
       setNewCategory('');
       await loadData();
@@ -134,7 +126,7 @@ const App: React.FC = () => {
     if (!text) return;
     setIsSyncing(true);
     const { success, error } = await supabaseService.addSentence(text, selectedCats);
-    if (error) alert(`Error: ${error}`);
+    if (error) alert(`Save Error: ${error}\n\nTip: Check if RLS policies are enabled on your Supabase tables.`);
     if (success) {
       setNewSentenceText('');
       setSelectedCats([]);
@@ -153,19 +145,20 @@ const App: React.FC = () => {
     const { success, error } = await supabaseService.updateSentence(id, editForm.text, editForm.categoryIds);
     if (success) {
       setEditingId(null);
-      await loadData();
+      // Immediately refresh the list from the newly synced cloud data
+      setAllSentences(await supabaseService.getSentences());
     } else {
-      alert(`Update failed: ${error}`);
+      alert(`Update Error: ${error}\n\nEnsure you have 'UPDATE' and 'DELETE' (for categories) permissions in Supabase.`);
     }
     setIsSyncing(false);
   };
 
   const handleDeleteSentence = async (id: string | number) => {
-    if (!confirm("Are you sure you want to delete this sentence?")) return;
+    if (!confirm("Delete this entry permanently?")) return;
     setIsSyncing(true);
     const { success, error } = await supabaseService.deleteSentence(id);
     if (success) await loadData();
-    else alert(`Delete failed: ${error}`);
+    else alert(`Delete Error: ${error}`);
     setIsSyncing(false);
   };
 
@@ -184,7 +177,6 @@ const App: React.FC = () => {
         <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-50 rounded-full blur-[120px] opacity-40"></div>
       </div>
 
-      {/* Main Content */}
       <div className={`relative z-10 text-center px-10 w-full max-w-5xl transition-all duration-700 ${showStats || showManage ? 'blur-md opacity-20 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
         <div className="flex flex-col items-center gap-2 mb-8">
            <div className={`flex items-center justify-center gap-4 transition-all duration-500 ease-in-out ${isAnimating ? 'opacity-20 -translate-y-1' : 'opacity-100 translate-y-0'}`}>
@@ -202,11 +194,9 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Manage Studio Modal */}
       {showManage && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
           <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col border border-white/50 overflow-hidden">
-            {/* Header */}
             <div className="p-8 md:p-12 pb-6 flex justify-between items-center border-b border-slate-50">
               <div className="space-y-4">
                 <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400">Content Studio</h2>
@@ -351,7 +341,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Stats Modal */}
       {showStats && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
            <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-lg text-center space-y-8">
@@ -369,10 +358,8 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Footer Interface */}
       <div className={`absolute bottom-8 w-full flex flex-col items-center gap-6 transition-all duration-700 ${showStats || showManage ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
         
-        {/* Session Focus Selector */}
         <div className="w-full max-w-xs md:max-w-md px-6 overflow-x-auto no-scrollbar flex items-center justify-center gap-4 py-2">
             <button 
               onClick={(e) => handleFocusChange(e, 'all')}

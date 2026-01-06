@@ -16,15 +16,11 @@ const getSupabaseConfig = () => {
   const envUrl = 
     // @ts-ignore
     process.env.SUPABASE_URL || (window as any).process?.env?.SUPABASE_URL || 
-    // @ts-ignore
-    process.env.REPEAT_SUPABASE_URL || (window as any).process?.env?.REPEAT_SUPABASE_URL || 
     '';
 
   const envKey = 
     // @ts-ignore
     process.env.SUPABASE_ANON_KEY || (window as any).process?.env?.SUPABASE_ANON_KEY || 
-    // @ts-ignore
-    process.env.REPEAT_SUPABASE_ANON_KEY || (window as any).process?.env?.REPEAT_SUPABASE_ANON_KEY || 
     '';
 
   const url = HARDCODED_URL || envUrl;
@@ -47,18 +43,6 @@ export const supabaseService = {
     return supabaseClient;
   },
 
-  getDebugInfo() {
-    const config = getSupabaseConfig();
-    const mask = (s: string) => s && s.length > 5 ? `${s.substring(0, 8)}...${s.substring(s.length - 4)}` : 'NOT FOUND';
-    return {
-      urlFound: !!config.url,
-      keyFound: !!config.key,
-      maskedUrl: mask(config.url),
-      maskedKey: mask(config.key),
-      isManual: config.isManual
-    };
-  },
-
   isConfigured(): boolean {
     const { url, key } = getSupabaseConfig();
     return !!(url && key && url.includes('supabase.co'));
@@ -75,47 +59,41 @@ export const supabaseService = {
     }
   },
 
-  async syncData(): Promise<void> {
-    if (!this.isConfigured()) return;
+  /**
+   * Fetches latest data and populates localStorage cache.
+   * Returns standardized Sentence objects.
+   */
+  async syncData(): Promise<Sentence[]> {
+    if (!this.isConfigured()) return [];
     try {
       const client = this.getClient();
-      const [cats, sents] = await Promise.all([
+      const [catsRes, sentsRes] = await Promise.all([
         client.from('categories').select('*').order('name'),
-        client.from('sentences').select('*, categories:sentence_categories(category_id)').order('created_at', { ascending: false })
+        client.from('sentences').select('id, text, sentence_categories(category_id)').order('created_at', { ascending: false })
       ]);
-      if (cats.data) localStorage.setItem('zen_categories_cache', JSON.stringify(cats.data));
-      if (sents.data) localStorage.setItem('zen_sentences_cache', JSON.stringify(sents.data));
+
+      if (catsRes.error) throw catsRes.error;
+      if (sentsRes.error) throw sentsRes.error;
+
+      const sentences: Sentence[] = (sentsRes.data || []).map((s: any) => ({
+        id: s.id,
+        text: s.text,
+        categoryIds: (s.sentence_categories || []).map((sc: any) => sc.category_id)
+      }));
+
+      localStorage.setItem('zen_categories_cache', JSON.stringify(catsRes.data || []));
+      localStorage.setItem('zen_sentences_cache', JSON.stringify(sentences));
+      
+      return sentences;
     } catch (e) {
-      console.error("Sync error:", e);
+      console.error("Zen Counter Sync Error:", e);
+      return [];
     }
   },
 
   async getSentences(): Promise<Sentence[]> {
-    if (!this.isConfigured()) return [];
-    try {
-      // Fetch sentences with their associated category IDs
-      const { data, error } = await this.getClient()
-        .from('sentences')
-        .select(`
-          id, 
-          text, 
-          sentence_categories (
-            category_id
-          )
-        `)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
-      return (data || []).map((s: any) => ({
-        id: s.id,
-        text: s.text,
-        categoryIds: s.sentence_categories.map((sc: any) => sc.category_id)
-      }));
-    } catch (e) {
-      console.error("Fetch sentences error:", e);
-      return [];
-    }
+    // We prefer calling syncData as it maintains the localStorage cache used by getRandomSentence
+    return this.syncData();
   },
 
   async addCategory(name: string): Promise<{ data: Category | null; error: string | null }> {
@@ -133,16 +111,20 @@ export const supabaseService = {
     try {
       const client = this.getClient();
       const { data: sentence, error: sError } = await client.from('sentences').insert([{ text }]).select();
-      if (sError) return { success: false, error: sError.message };
+      if (sError) throw sError;
       
       if (sentence?.[0] && categoryIds.length > 0) {
         const links = categoryIds.map(catId => ({ sentence_id: sentence[0].id, category_id: catId }));
-        await client.from('sentence_categories').insert(links);
+        const { error: linkError } = await client.from('sentence_categories').insert(links);
+        if (linkError) throw linkError;
       }
       
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) { return { success: false, error: e.message }; }
+    } catch (e: any) { 
+      console.error("Add Sentence Error:", e);
+      return { success: false, error: e.message }; 
+    }
   },
 
   async updateSentence(id: string | number, text: string, categoryIds: (string | number)[]): Promise<{ success: boolean; error: string | null }> {
@@ -150,30 +132,40 @@ export const supabaseService = {
     try {
       const client = this.getClient();
       
-      // Update sentence text
+      // 1. Update text
       const { error: sError } = await client.from('sentences').update({ text }).eq('id', id);
-      if (sError) return { success: false, error: sError.message };
+      if (sError) throw sError;
       
-      // Update categories: delete old associations and insert new ones
-      await client.from('sentence_categories').delete().eq('sentence_id', id);
+      // 2. Update Categories (Delete old then Add new)
+      const { error: delError } = await client.from('sentence_categories').delete().eq('sentence_id', id);
+      if (delError) throw delError;
+
       if (categoryIds.length > 0) {
         const links = categoryIds.map(catId => ({ sentence_id: id, category_id: catId }));
-        await client.from('sentence_categories').insert(links);
+        const { error: insError } = await client.from('sentence_categories').insert(links);
+        if (insError) throw insError;
       }
       
+      // 3. Re-sync cache immediately
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) { return { success: false, error: e.message }; }
+    } catch (e: any) { 
+      console.error("Update Sentence Error:", e);
+      return { success: false, error: e.message }; 
+    }
   },
 
   async deleteSentence(id: string | number): Promise<{ success: boolean; error: string | null }> {
     if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
     try {
       const { error } = await this.getClient().from('sentences').delete().eq('id', id);
-      if (error) return { success: false, error: error.message };
+      if (error) throw error;
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) { return { success: false, error: e.message }; }
+    } catch (e: any) { 
+      console.error("Delete Sentence Error:", e);
+      return { success: false, error: e.message }; 
+    }
   },
 
   getCategories(): Category[] {
@@ -186,29 +178,15 @@ export const supabaseService = {
   getRandomSentence(filterCategoryId?: string | number | 'all'): string {
     try {
       const cached = localStorage.getItem('zen_sentences_cache');
-      let sentences: any[] = cached ? JSON.parse(cached) : [];
+      let sentences: Sentence[] = cached ? JSON.parse(cached) : [];
       
       if (filterCategoryId && filterCategoryId !== 'all') {
-        sentences = sentences.filter(s => {
-          // If synced structure has categories array
-          if (s.categories) {
-            return s.categories.some((c: any) => c.category_id === filterCategoryId);
-          }
-          // If structure from getSentences() was used
-          if (s.sentence_categories) {
-            return s.sentence_categories.some((sc: any) => sc.category_id === filterCategoryId);
-          }
-          // Fallback if we just have categoryIds mapped locally
-          if (s.categoryIds) {
-            return s.categoryIds.includes(filterCategoryId);
-          }
-          return false;
-        });
+        sentences = sentences.filter(s => (s.categoryIds || []).includes(filterCategoryId));
       }
 
       if (sentences.length === 0) {
         return filterCategoryId && filterCategoryId !== 'all' 
-          ? "This theme awaits your wisdom. Add a sentence to begin." 
+          ? "This theme awaits your wisdom." 
           : "Adopt the pace of nature: her secret is patience.";
       }
       
