@@ -3,10 +3,10 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Category, Sentence } from '../types';
 
 /**
- * Simplified environment variable retrieval based on successful project pattern.
+ * Supabase configuration with hardcoded credentials provided by the user.
  */
 const getSupabaseConfig = () => {
-  // 1. Try LocalStorage override first (Manual bypass)
+  // 1. Try LocalStorage override first (Manual bypass if needed)
   const manualUrl = localStorage.getItem('SB_OVERRIDE_URL');
   const manualKey = localStorage.getItem('SB_OVERRIDE_KEY');
   
@@ -14,21 +14,27 @@ const getSupabaseConfig = () => {
     return { url: manualUrl, key: manualKey, isManual: true };
   }
 
-  // 2. Try standard environment variables using the user's suggested pattern
-  // Check for both REPEAT_ and standard variants
-  const url = 
-    // @ts-ignore
-    process.env.REPEAT_SUPABASE_URL || (window as any).process?.env?.REPEAT_SUPABASE_URL || 
+  // 2. Hardcoded values provided by the user for direct connection
+  const HARDCODED_URL = 'https://irmnoqctkoaepeamzfgt.supabase.co';
+  const HARDCODED_KEY = 'sb_publishable_jm-zZS8c3Vsuy0l6D2dJdw_1J-IW4kj';
+
+  // 3. Fallback to environment variables using the user's successful pattern
+  const envUrl = 
     // @ts-ignore
     process.env.SUPABASE_URL || (window as any).process?.env?.SUPABASE_URL || 
+    // @ts-ignore
+    process.env.REPEAT_SUPABASE_URL || (window as any).process?.env?.REPEAT_SUPABASE_URL || 
     '';
 
-  const key = 
-    // @ts-ignore
-    process.env.REPEAT_SUPABASE_ANON_KEY || (window as any).process?.env?.REPEAT_SUPABASE_ANON_KEY || 
+  const envKey = 
     // @ts-ignore
     process.env.SUPABASE_ANON_KEY || (window as any).process?.env?.SUPABASE_ANON_KEY || 
+    // @ts-ignore
+    process.env.REPEAT_SUPABASE_ANON_KEY || (window as any).process?.env?.REPEAT_SUPABASE_ANON_KEY || 
     '';
+
+  const url = HARDCODED_URL || envUrl;
+  const key = HARDCODED_KEY || envKey;
 
   return { url, key, isManual: false };
 };
@@ -39,7 +45,7 @@ export const supabaseService = {
   getClient(): SupabaseClient {
     const config = getSupabaseConfig();
     
-    // Initialize or re-initialize if the URL has changed (e.g., after manual update)
+    // Initialize or re-initialize if the URL or Key has changed
     if (!supabaseClient || (supabaseClient as any).supabaseUrl !== config.url) {
       supabaseClient = createClient(
         config.url || 'https://placeholder-project.supabase.co', 
@@ -64,7 +70,7 @@ export const supabaseService = {
 
   getDebugInfo() {
     const config = getSupabaseConfig();
-    const mask = (s: string) => s && s.length > 10 ? `${s.substring(0, 8)}...${s.substring(s.length - 4)}` : 'NOT FOUND';
+    const mask = (s: string) => s && s.length > 5 ? `${s.substring(0, 8)}...${s.substring(s.length - 4)}` : 'NOT FOUND';
     return {
       urlFound: !!config.url,
       keyFound: !!config.key,
@@ -76,8 +82,8 @@ export const supabaseService = {
 
   isConfigured(): boolean {
     const { url, key } = getSupabaseConfig();
-    // Basic validation to check if variables look real
-    return !!(url && key && url.includes('supabase.co') && key.length > 20);
+    // Basic validation: check if a URL exists and is not the placeholder
+    return !!(url && key && url.includes('supabase.co'));
   },
 
   async testConnection(): Promise<{ success: boolean; message: string }> {
@@ -85,11 +91,12 @@ export const supabaseService = {
       return { success: false, message: "Configuration missing or invalid." };
     }
     try {
+      // Simple query to test the connection to the database
       const { error } = await this.getClient().from('categories').select('id').limit(1);
       if (error) throw error;
-      return { success: true, message: "Connected successfully." };
+      return { success: true, message: "Connected successfully!" };
     } catch (e: any) {
-      return { success: false, message: e.message || "Connection failed." };
+      return { success: false, message: e.message || "Connection failed. Check your Supabase project settings." };
     }
   },
 
