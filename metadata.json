@@ -1,0 +1,5 @@
+{
+  "name": "Zen Counter",
+  "description": "A minimalist countdown app that pairs random numbers with inspiring sentences. Features smooth animations, offline support, and AI-powered sentence generation.",
+  "requestFramePermissions": []
+}
