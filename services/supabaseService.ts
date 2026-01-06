@@ -3,8 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { Category, Sentence } from '../types';
 
 // Use environment variables or placeholders if not provided
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://your-project.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'your-anon-key';
+const SUPABASE_URL = process.env.REPEAT_SUPABASE_URL || 'https://your-project.supabase.co';
+const SUPABASE_KEY = process.env.REPEAT_SUPABASE_ANON_KEY || 'your-anon-key';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
