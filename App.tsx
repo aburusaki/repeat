@@ -23,8 +23,10 @@ const App: React.FC = () => {
     setIsSyncing(true);
     const status = await supabaseService.testConnection();
     setDbStatus({ connected: status.success, message: status.message });
-    await supabaseService.syncData();
-    setAllCategories(supabaseService.getCategories());
+    if (status.success) {
+      await supabaseService.syncData();
+      setAllCategories(supabaseService.getCategories());
+    }
     setIsSyncing(false);
   }, []);
 
@@ -42,6 +44,13 @@ const App: React.FC = () => {
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Force a sync check when opening the management studio
+  useEffect(() => {
+    if (showManage) {
+      checkConnection();
+    }
+  }, [showManage, checkConnection]);
 
   const handleInteraction = useCallback(() => {
     if (isAnimating || isSyncing || showStats || showManage) return;
@@ -114,9 +123,7 @@ const App: React.FC = () => {
     if (success) {
       setNewSentenceText('');
       setSelectedCats([]);
-      // Reload cache to ensure the new sentence can appear next time
       await supabaseService.syncData();
-      alert("Successfully added to your zen pool.");
     }
     setIsSyncing(false);
   };
@@ -137,7 +144,6 @@ const App: React.FC = () => {
         <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-50 rounded-full blur-[120px] opacity-40"></div>
       </div>
 
-      {/* Main Display */}
       <div className={`relative z-10 text-center px-10 w-full max-w-5xl transition-all duration-700 ${showStats || showManage ? 'blur-md opacity-20 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
         <div className={`flex items-center justify-center gap-4 mb-8 transition-all duration-500 ease-in-out ${isAnimating ? 'opacity-20 -translate-y-1' : 'opacity-100 translate-y-0'}`}>
           <div className="h-[1px] w-6 bg-slate-200"></div>
@@ -149,7 +155,6 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Stats Overlay */}
       {showStats && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-20 flex items-center justify-center p-6 bg-white/40 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-3xl shadow-2xl shadow-slate-200/50 w-full max-w-lg max-h-[70vh] overflow-y-auto">
@@ -173,7 +178,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Management Overlay */}
       {showManage && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
           <div className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto relative border border-white/50">
@@ -187,7 +191,7 @@ const App: React.FC = () => {
                       {dbStatus.connected ? 'Supabase Linked' : 'Disconnected'}
                     </span>
                   </div>
-                  {!dbStatus.connected && <p className="text-[10px] text-red-400 italic font-medium">{dbStatus.message}</p>}
+                  {!dbStatus.connected && <p className="text-[10px] text-red-400 italic font-medium max-w-xs">{dbStatus.message}</p>}
                 </div>
               </div>
               <div className="flex gap-4">
@@ -203,7 +207,6 @@ const App: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-16">
-              {/* Category Section */}
               <section className="space-y-6">
                 <div>
                   <h3 className="text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-4">Tags</h3>
@@ -223,12 +226,11 @@ const App: React.FC = () => {
                     {allCategories.map(cat => (
                       <span key={cat.id} className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-full text-[10px] font-bold uppercase tracking-wider">{cat.name}</span>
                     ))}
-                    {allCategories.length === 0 && <p className="text-slate-300 text-[10px] italic">No categories found in DB.</p>}
+                    {allCategories.length === 0 && <p className="text-slate-300 text-[10px] italic">No categories found.</p>}
                   </div>
                 </div>
               </section>
 
-              {/* Sentence Section */}
               <section className="space-y-6">
                 <h3 className="text-xs font-black text-slate-900 uppercase tracking-[0.2em] mb-4">New Entry</h3>
                 <form onSubmit={handleAddSentence} className="space-y-6">
@@ -257,7 +259,6 @@ const App: React.FC = () => {
                           {cat.name}
                         </button>
                       ))}
-                      {allCategories.length === 0 && <p className="text-slate-300 text-[9px] italic p-2">Create a tag first.</p>}
                     </div>
                   </div>
 
@@ -268,7 +269,6 @@ const App: React.FC = () => {
                   >
                     {isSyncing ? 'Synchronizing...' : 'Push to Cloud'}
                   </button>
-                  {!dbStatus.connected && <p className="text-center text-[9px] text-red-400 font-bold uppercase tracking-widest">Database connection required</p>}
                 </form>
               </section>
             </div>
@@ -276,7 +276,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Footer Interface */}
       <div className={`absolute bottom-12 flex flex-col items-center gap-6 transition-all duration-700 ${showStats || showManage ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
         <div className="flex gap-10 items-center">
           <button 
@@ -296,7 +295,6 @@ const App: React.FC = () => {
           </div>
         </div>
         
-        {/* Progress Bar */}
         <div className="flex gap-2 items-center">
            {[...Array(7)].map((_, i) => (
              <div 
