@@ -25,6 +25,16 @@ export const statsService = {
   },
 
   /**
+   * Returns the count for a specific sentence today.
+   */
+  getSentenceCount(sentence: string): number {
+    const today = new Date().toISOString().split('T')[0];
+    const rawStats = localStorage.getItem(STATS_KEY);
+    const stats: DailyStats = rawStats ? JSON.parse(rawStats) : {};
+    return stats[today]?.[sentence] || 0;
+  },
+
+  /**
    * Retrieves stats for a specific date.
    */
   getStatsForDate(date?: string): { sentence: string; count: number }[] {

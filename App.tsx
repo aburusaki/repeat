@@ -7,6 +7,7 @@ import { Category, Sentence } from './types';
 const App: React.FC = () => {
   const [currentNumber, setCurrentNumber] = useState<number>(0);
   const [currentSentence, setCurrentSentence] = useState<string>('');
+  const [counterMode, setCounterMode] = useState<'up' | 'down'>('down');
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
   const [showStats, setShowStats] = useState<boolean>(false);
@@ -23,6 +24,11 @@ const App: React.FC = () => {
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [editForm, setEditForm] = useState<{ text: string; categoryIds: (string | number)[] }>({ text: '', categoryIds: [] });
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Real-time stat for current sentence
+  const todayClickCount = useMemo(() => {
+    return statsService.getSentenceCount(currentSentence);
+  }, [currentSentence, currentNumber]); // Re-calc on every number change/click
 
   const loadData = useCallback(async () => {
     setIsSyncing(true);
@@ -43,27 +49,48 @@ const App: React.FC = () => {
   useEffect(() => {
     statsService.pruneStats();
     loadData().then(() => {
-      setCurrentNumber(Math.floor(Math.random() * 7) + 1);
+      // Initialize based on mode
+      setCurrentNumber(counterMode === 'down' ? 7 : 1);
       setCurrentSentence(supabaseService.getRandomSentence());
     });
   }, [loadData]);
 
   const handleInteraction = useCallback(() => {
     if (isAnimating || isSyncing || showStats || showManage) return;
-    if (currentSentence) statsService.recordClick(currentSentence);
+    
+    // Record click for the current active sentence
+    if (currentSentence) {
+      statsService.recordClick(currentSentence);
+    }
+
     setIsAnimating(true);
+    
     setTimeout(() => {
       setCurrentNumber(prev => {
-        if (prev <= 1) {
-          const newNum = Math.floor(Math.random() * 7) + 1;
-          setCurrentSentence(supabaseService.getRandomSentence());
-          return newNum;
+        if (counterMode === 'down') {
+          if (prev <= 1) {
+            setCurrentSentence(supabaseService.getRandomSentence());
+            return 7;
+          }
+          return prev - 1;
+        } else {
+          if (prev >= 7) {
+            setCurrentSentence(supabaseService.getRandomSentence());
+            return 1;
+          }
+          return prev + 1;
         }
-        return prev - 1;
       });
       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, isSyncing, showStats, showManage, currentSentence]);
+  }, [isAnimating, isSyncing, showStats, showManage, currentSentence, counterMode]);
+
+  const toggleMode = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newMode = counterMode === 'down' ? 'up' : 'down';
+    setCounterMode(newMode);
+    setCurrentNumber(newMode === 'down' ? 7 : 1);
+  };
 
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -133,12 +160,18 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <div className={`relative z-10 text-center px-10 w-full max-w-5xl transition-all duration-700 ${showStats || showManage ? 'blur-md opacity-20 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
-        <div className={`flex items-center justify-center gap-4 mb-8 transition-all duration-500 ease-in-out ${isAnimating ? 'opacity-20 -translate-y-1' : 'opacity-100 translate-y-0'}`}>
-          <div className="h-[1px] w-6 bg-slate-200"></div>
-          <div className="text-lg md:text-xl font-medium text-slate-400 tracking-[0.3em]">{currentNumber}</div>
-          <div className="h-[1px] w-6 bg-slate-200"></div>
+        <div className="flex flex-col items-center gap-2 mb-8">
+           <div className={`flex items-center justify-center gap-4 transition-all duration-500 ease-in-out ${isAnimating ? 'opacity-20 -translate-y-1' : 'opacity-100 translate-y-0'}`}>
+            <div className="h-[1px] w-6 bg-slate-200"></div>
+            <div className="text-2xl md:text-3xl font-light text-slate-800 tracking-[0.3em] font-serif italic">{currentNumber}</div>
+            <div className="h-[1px] w-6 bg-slate-200"></div>
+          </div>
+          <div className={`text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 transition-opacity duration-300 ${isAnimating ? 'opacity-0' : 'opacity-100'}`}>
+            Today: {todayClickCount}
+          </div>
         </div>
-        <div className={`text-4xl md:text-6xl lg:text-7xl font-serif italic text-slate-800 leading-[1.2] transition-all duration-700 ease-in-out ${isAnimating ? 'opacity-0 translate-y-1' : 'opacity-100 translate-y-0'}`}>
+        
+        <div className={`text-4xl md:text-6xl lg:text-7xl font-serif italic text-slate-800 leading-[1.2] transition-all duration-700 ease-in-out ${isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0'}`}>
           {currentSentence || '...'}
         </div>
       </div>
@@ -201,7 +234,6 @@ const App: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-8">
-                  {/* Search bar */}
                   <div className="flex gap-4 items-center mb-10">
                     <div className="flex-1 relative">
                       <input 
@@ -215,7 +247,6 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Sentences List */}
                   <div className="space-y-4">
                     {filteredSentences.map(s => (
                       <div key={s.id} className={`p-8 rounded-3xl border transition-all ${editingId === s.id ? 'bg-blue-50/50 border-blue-200 ring-2 ring-blue-50' : 'bg-white border-slate-100 hover:border-slate-300 shadow-sm hover:shadow-md'}`}>
@@ -267,9 +298,6 @@ const App: React.FC = () => {
                         )}
                       </div>
                     ))}
-                    {filteredSentences.length === 0 && (
-                      <div className="py-20 text-center text-slate-300 font-serif italic text-xl">No entries found matching your search.</div>
-                    )}
                   </div>
                 </div>
               )}
@@ -278,12 +306,12 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Stats Modal Placeholder */}
+      {/* Stats Modal */}
       {showStats && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
            <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-lg text-center space-y-8">
               <h2 className="text-xs font-black tracking-[0.4em] uppercase text-slate-400">Activity Logs</h2>
-              <div className="space-y-4">
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto">
                 {statsService.getStatsForDate().map((stat, i) => (
                   <div key={i} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                     <span className="text-xs font-serif italic text-slate-600 truncate mr-4">"{stat.sentence}"</span>
@@ -300,16 +328,34 @@ const App: React.FC = () => {
       <div className={`absolute bottom-12 flex flex-col items-center gap-6 transition-all duration-700 ${showStats || showManage ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
         <div className="flex gap-10 items-center">
           <button onClick={(e) => { e.stopPropagation(); setShowStats(true); }} className="text-slate-300 text-[10px] font-black tracking-[0.4em] uppercase hover:text-slate-900 transition-colors">Logs</button>
-          <button onClick={(e) => { e.stopPropagation(); setShowManage(true); }} className="group p-3 text-slate-300 hover:text-slate-900 transition-all rounded-full border border-slate-100 bg-white shadow-sm hover:shadow-md hover:-translate-y-0.5">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:rotate-12 transition-transform"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-          </button>
+          
+          <div className="flex flex-col items-center gap-2">
+            <button onClick={(e) => { e.stopPropagation(); setShowManage(true); }} className="group p-3 text-slate-300 hover:text-slate-900 transition-all rounded-full border border-slate-100 bg-white shadow-sm hover:shadow-md hover:-translate-y-0.5">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:rotate-12 transition-transform"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+            </button>
+            <button 
+              onClick={toggleMode} 
+              className="text-[8px] font-black uppercase tracking-widest text-slate-300 hover:text-blue-500 transition-colors"
+            >
+              Mode: {counterMode === 'down' ? 'Descend' : 'Ascend'}
+            </button>
+          </div>
+
           <div className={`text-slate-300 text-[10px] font-black tracking-[0.4em] uppercase transition-all ${isSyncing ? 'opacity-100 text-blue-400 animate-pulse' : 'opacity-40'}`}>
             {isSyncing ? 'Sync' : 'Live'}
           </div>
         </div>
+        
         <div className="flex gap-2 items-center">
            {[...Array(7)].map((_, i) => (
-             <div key={i} className={`h-[2px] rounded-full transition-all duration-700 ease-out ${i < currentNumber ? 'bg-slate-400 w-5' : 'bg-slate-200 w-1.5'}`} />
+             <div 
+                key={i} 
+                className={`h-[2px] rounded-full transition-all duration-700 ease-out 
+                  ${counterMode === 'down' 
+                    ? (i < currentNumber ? 'bg-slate-400 w-5' : 'bg-slate-200 w-1.5') 
+                    : (i >= currentNumber ? 'bg-slate-200 w-1.5' : 'bg-slate-400 w-5')
+                  }`} 
+             />
            ))}
         </div>
       </div>
