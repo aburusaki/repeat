@@ -13,18 +13,34 @@ const getSupabaseConfig = () => {
   const HARDCODED_URL = 'https://irmnoqctkoaepeamzfgt.supabase.co';
   const HARDCODED_KEY = 'sb_publishable_jm-zZS8c3Vsuy0l6D2dJdw_1J-IW4kj';
 
-  const envUrl = 
-    // @ts-ignore
-    process.env.SUPABASE_URL || (window as any).process?.env?.SUPABASE_URL || 
-    '';
+  let envUrl = '';
+  let envKey = '';
 
-  const envKey = 
+  // 1. Try import.meta.env (Vite/Modern ESM)
+  try {
     // @ts-ignore
-    process.env.SUPABASE_ANON_KEY || (window as any).process?.env?.SUPABASE_ANON_KEY || 
-    '';
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      envUrl = import.meta.env.VITE_SUPABASE_URL || import.meta.env.SUPABASE_URL;
+      // @ts-ignore
+      envKey = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.SUPABASE_ANON_KEY;
+    }
+  } catch (e) {}
 
-  const url = HARDCODED_URL || envUrl;
-  const key = HARDCODED_KEY || envKey;
+  // 2. Try window.process (Legacy/Polyfill)
+  if (!envUrl) {
+    try {
+      // Access via window to avoid ReferenceError on strict 'process' global
+      const w = window as any;
+      if (w.process && w.process.env) {
+        envUrl = w.process.env.SUPABASE_URL;
+        envKey = w.process.env.SUPABASE_ANON_KEY;
+      }
+    } catch (e) {}
+  }
+
+  const url = envUrl || HARDCODED_URL || '';
+  const key = envKey || HARDCODED_KEY || '';
 
   return { url, key, isManual: false };
 };
@@ -261,11 +277,6 @@ export const supabaseService = {
     try {
       const client = this.getClient();
       const today = new Date().toISOString().split('T')[0];
-
-      // Try to fetch existing first to increment, or use upsert with a known count if possible.
-      // Since we don't have an atomic increment RPC easily set up by user, we do a quick select-update or upsert.
-      // An upsert with On Conflict is best.
-      // But standard Supabase upsert requires us to know the new value.
       
       const { data: existing } = await client
         .from('daily_stats')
@@ -289,7 +300,6 @@ export const supabaseService = {
   async resetAllStats(): Promise<void> {
     if (!this.isConfigured()) return;
     try {
-       // Delete all stats (or just today's, but prompt said "reset all counters")
        const { error } = await this.getClient().from('daily_stats').delete().neq('count', -1); // delete all
        if (error) throw error;
     } catch (e) {

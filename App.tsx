@@ -63,27 +63,43 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    setIsSyncing(true);
-    refreshData().then(() => {
-      setIsSyncing(false);
-      resetCycle(counterMode, sessionFocusId);
-    });
-
-    // Realtime subscription
-    const unsubscribe = supabaseService.subscribeToChanges(
-      (sents, cats) => {
-        setAllSentences(sents);
-        setAllCategories(cats);
-      },
-      (stats) => {
-        setDailyStats(stats);
+    // Initialization with safety check
+    const init = async () => {
+      setIsSyncing(true);
+      try {
+        await refreshData();
+        // Since resetCycle uses the state (sents), and state updates are async, 
+        // rely on the data being in local storage or next render. 
+        // But for simplicity, we call resetCycle immediately as supabaseService reads from local storage for random sentence.
+        resetCycle('down', 'all'); 
+      } catch (e) {
+        console.error("Initialization failed:", e);
+      } finally {
+        setIsSyncing(false);
       }
-    );
+    };
+    init();
+
+    // Realtime subscription with safety check
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = supabaseService.subscribeToChanges(
+        (sents, cats) => {
+          setAllSentences(sents);
+          setAllCategories(cats);
+        },
+        (stats) => {
+          setDailyStats(stats);
+        }
+      );
+    } catch (e) {
+      console.error("Subscription failed:", e);
+    }
 
     return () => {
       unsubscribe();
     };
-  }, [refreshData]); // Only on mount/refresh logic changes
+  }, [refreshData, resetCycle]); 
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
@@ -137,12 +153,8 @@ const App: React.FC = () => {
 
     const handleWheel = (e: WheelEvent) => {
       const now = Date.now();
-      
-      // Throttle scroll: If less than 600ms has passed since last scroll action, ignore.
-      // This prevents momentum scrolling from triggering multiple changes.
       if (now - lastScrollTime.current < 600) return;
 
-      // Check for scroll up (negative deltaY). 
       if (e.deltaY < -10) {
         lastScrollTime.current = now;
         handleInteraction();
@@ -155,18 +167,15 @@ const App: React.FC = () => {
 
     const handleTouchMove = (e: TouchEvent) => {
       const now = Date.now();
-      // Throttle for touch as well
       if (now - lastScrollTime.current < 600) return;
 
       const currentY = e.touches[0].clientY;
       const diff = currentY - touchStartY.current;
 
       // Dragging UP means currentY is smaller than startY, so diff is negative.
-      // e.g., Start at 500, move to 400 -> diff = -100.
       if (diff < -50) {
         lastScrollTime.current = now;
         handleInteraction();
-        // Reset anchor to support continuous slow dragging 
         touchStartY.current = currentY;
       }
     };
@@ -174,8 +183,6 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('wheel', handleWheel);
     window.addEventListener('touchstart', handleTouchStart);
-    // passive: false allows us to potentially preventDefault if needed, but we aren't doing it to keep simple.
-    // However, touchmove listeners on window are passive by default in some browsers.
     window.addEventListener('touchmove', handleTouchMove);
 
     return () => {
@@ -202,7 +209,6 @@ const App: React.FC = () => {
     if (error) alert(`Category Error: ${error}`);
     else {
       setNewCategory('');
-      // Subscription updates state
     }
     setIsSyncing(false);
   };
@@ -217,7 +223,6 @@ const App: React.FC = () => {
     else {
       setNewSentenceText('');
       setSelectedCats([]);
-      // Subscription updates state
     }
     setIsSyncing(false);
   };
@@ -249,7 +254,6 @@ const App: React.FC = () => {
   const handleResetAllCounters = async () => {
     if (confirm("Are you sure you want to reset all counters to 0? This cannot be undone.")) {
       await supabaseService.resetAllStats();
-      // Subscription handles the UI update
     }
   };
 
@@ -262,7 +266,6 @@ const App: React.FC = () => {
   }, [allSentences, searchTerm, filterCategoryId]);
 
   const statsList = useMemo(() => {
-    // Map stats to sentence text for display
     return dailyStats
       .map(stat => {
         const s = allSentences.find(sent => String(sent.id) === String(stat.sentence_id));
