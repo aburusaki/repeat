@@ -1,5 +1,5 @@
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import { Category, Sentence } from '../types';
 
 const getSupabaseConfig = () => {
@@ -94,6 +94,38 @@ export const supabaseService = {
   async getSentences(): Promise<Sentence[]> {
     // We prefer calling syncData as it maintains the localStorage cache used by getRandomSentence
     return this.syncData();
+  },
+
+  subscribeToChanges(callback: (sentences: Sentence[], categories: Category[]) => void): () => void {
+    if (!this.isConfigured()) return () => {};
+    
+    const client = this.getClient();
+    
+    const handleEvent = async () => {
+      const sents = await this.syncData();
+      const cats = this.getCategories();
+      callback(sents, cats);
+    };
+
+    const channel = client.channel('public-db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, handleEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentences' }, handleEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentence_categories' }, handleEvent)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Realtime subscription active!');
+        }
+        if (status === 'CHANNEL_ERROR') {
+          console.error('Realtime connection failed. Check if Replication is enabled in Supabase Dashboard -> Database -> Replication.');
+        }
+        if (status === 'TIMED_OUT') {
+          console.warn('Realtime connection timed out.');
+        }
+      });
+
+    return () => {
+      client.removeChannel(channel);
+    };
   },
 
   async addCategory(name: string): Promise<{ data: Category | null; error: string | null }> {

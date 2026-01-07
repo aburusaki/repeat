@@ -68,5 +68,12 @@ export const statsService = {
     });
 
     localStorage.setItem(STATS_KEY, JSON.stringify(newStats));
+  },
+
+  /**
+   * Resets all counters to 0 by clearing the stats storage.
+   */
+  resetAllStats(): void {
+    localStorage.removeItem(STATS_KEY);
   }
 };

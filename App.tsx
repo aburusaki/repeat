@@ -6,7 +6,7 @@ import { Category, Sentence } from './types';
 
 const App: React.FC = () => {
   const [currentNumber, setCurrentNumber] = useState<number>(0);
-  const [randomLimit, setRandomLimit] = useState<number>(7); 
+  const [randomLimit, setRandomLimit] = useState<number>(5); 
   const [currentSentence, setCurrentSentence] = useState<string>('');
   const [counterMode, setCounterMode] = useState<'up' | 'down'>('down');
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
@@ -15,6 +15,9 @@ const App: React.FC = () => {
   const [showManage, setShowManage] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
   
+  // Track stats version to force UI updates when stats are reset
+  const [statsVersion, setStatsVersion] = useState<number>(0);
+
   const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
 
   const [newCategory, setNewCategory] = useState('');
@@ -29,9 +32,9 @@ const App: React.FC = () => {
 
   const todayClickCount = useMemo(() => {
     return statsService.getSentenceCount(currentSentence);
-  }, [currentSentence, currentNumber]);
+  }, [currentSentence, currentNumber, statsVersion]);
 
-  const generateRandomLimit = () => Math.floor(Math.random() * 1) + 1;
+  const generateRandomLimit = () => Math.floor(Math.random() * 5) + 1;
 
   const loadData = useCallback(async () => {
     setIsSyncing(true);
@@ -58,6 +61,16 @@ const App: React.FC = () => {
     loadData().then(() => {
       resetCycle(counterMode, sessionFocusId);
     });
+
+    // Realtime subscription
+    const unsubscribe = supabaseService.subscribeToChanges((sents, cats) => {
+      setAllCategories(cats);
+      setAllSentences(sents);
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [loadData]);
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
@@ -71,6 +84,7 @@ const App: React.FC = () => {
     
     if (currentSentence) {
       statsService.recordClick(currentSentence);
+      setStatsVersion(v => v + 1);
     }
 
     setIsAnimating(true);
@@ -160,6 +174,13 @@ const App: React.FC = () => {
     if (success) await loadData();
     else alert(`Delete Error: ${error}`);
     setIsSyncing(false);
+  };
+
+  const handleResetAllCounters = () => {
+    if (confirm("Are you sure you want to reset all counters to 0? This cannot be undone.")) {
+      statsService.resetAllStats();
+      setStatsVersion(v => v + 1);
+    }
   };
 
   const filteredSentences = useMemo(() => {
@@ -323,7 +344,7 @@ const App: React.FC = () => {
                             </div>
                             <div className="flex gap-2 items-center justify-end">
                               <button onClick={() => handleStartEdit(s)} className="p-3 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121(0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                               </button>
                               <button onClick={() => handleDeleteSentence(s.id)} className="p-3 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-all">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
@@ -343,17 +364,24 @@ const App: React.FC = () => {
 
       {showStats && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
-           <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-lg text-center space-y-8">
+           <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-lg text-center space-y-8 flex flex-col max-h-[85vh]">
               <h2 className="text-xs font-black tracking-[0.4em] uppercase text-slate-400">Activity Logs</h2>
-              <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-                {statsService.getStatsForDate().map((stat, i) => (
-                  <div key={i} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
-                    <span className="text-xs font-serif italic text-slate-600 truncate mr-4">"{stat.sentence}"</span>
-                    <span className="text-[10px] font-black text-slate-900 px-3 py-1 bg-white rounded-lg shadow-sm">{stat.count}</span>
-                  </div>
-                ))}
+              <div className="space-y-4 overflow-y-auto flex-1 pr-2 no-scrollbar">
+                {statsService.getStatsForDate().length === 0 ? (
+                  <div className="py-20 text-slate-300 italic text-sm">No activity recorded today</div>
+                ) : (
+                  statsService.getStatsForDate().map((stat, i) => (
+                    <div key={i} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
+                      <span className="text-xs font-serif italic text-slate-600 truncate mr-4 text-left">"{stat.sentence}"</span>
+                      <span className="text-[10px] font-black text-slate-900 px-3 py-1 bg-white rounded-lg shadow-sm">{stat.count}</span>
+                    </div>
+                  ))
+                )}
               </div>
-              <button onClick={() => setShowStats(false)} className="w-full py-4 bg-slate-900 text-white rounded-3xl text-[10px] font-black uppercase tracking-widest">Done</button>
+              <div className="flex flex-col gap-3 pt-4 border-t border-slate-50">
+                <button onClick={handleResetAllCounters} className="w-full py-4 bg-red-50 text-red-500 rounded-3xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-colors">Reset All Counters</button>
+                <button onClick={() => setShowStats(false)} className="w-full py-4 bg-slate-900 text-white rounded-3xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-slate-200">Done</button>
+              </div>
            </div>
         </div>
       )}
