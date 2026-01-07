@@ -97,6 +97,7 @@ export const supabaseService = {
 
   /**
    * Subscribes to changes in content AND stats.
+   * Uses polling as fallback if Realtime is not enabled on the table.
    */
   subscribeToChanges(
     onContentChange: (sentences: Sentence[], categories: Category[]) => void,
@@ -105,6 +106,7 @@ export const supabaseService = {
     if (!this.isConfigured()) return () => {};
     
     const client = this.getClient();
+    let pollingInterval: any = null;
     
     const handleContentEvent = async () => {
       const sents = await this.syncData();
@@ -117,18 +119,36 @@ export const supabaseService = {
       onStatsChange(stats);
     };
 
+    const startPolling = () => {
+      if (pollingInterval) return;
+      // Initial fetch to ensure data is fresh if realtime failed
+      handleContentEvent();
+      handleStatsEvent();
+      
+      pollingInterval = setInterval(() => {
+        handleContentEvent();
+        handleStatsEvent();
+      }, 5000); // Poll every 5s
+    };
+
     const channel = client.channel('public-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, handleContentEvent)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sentences' }, handleContentEvent)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sentence_categories' }, handleContentEvent)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_stats' }, handleStatsEvent)
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') console.log('Realtime subscription active!');
-        if (status === 'CHANNEL_ERROR') console.error('Realtime connection failed. Ensure Replication is enabled.');
+        if (status === 'SUBSCRIBED') {
+            console.log('Realtime subscription active!');
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.warn('Realtime connection failed (likely Replication not enabled). Falling back to polling.');
+            startPolling();
+        }
       });
 
     return () => {
       client.removeChannel(channel);
+      if (pollingInterval) clearInterval(pollingInterval);
     };
   },
 

@@ -298,6 +298,32 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {showStats && (
+        <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-lg flex flex-col border border-white/50 overflow-hidden max-h-[80vh]">
+            <div className="p-8 pb-6 flex justify-between items-center border-b border-slate-50">
+              <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400">Daily Logs</h2>
+              <button onClick={() => setShowStats(false)} className="px-6 py-2 bg-slate-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-200">Close</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-8 space-y-4">
+               {statsList.length === 0 ? (
+                 <div className="text-center py-10 text-slate-400 text-xs tracking-widest uppercase">No reflections yet today</div>
+               ) : (
+                 statsList.map((stat, idx) => (
+                   <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                      <span className="text-sm font-serif italic text-slate-700 pr-4 line-clamp-2">"{stat.sentence}"</span>
+                      <span className="px-3 py-1 bg-white rounded-full text-[10px] font-black text-blue-600 shadow-sm border border-slate-100">{stat.count}</span>
+                   </div>
+                 ))
+               )}
+            </div>
+             <div className="p-6 border-t border-slate-50 bg-slate-50/50 text-center">
+                <button onClick={handleResetAllCounters} className="text-[9px] font-black uppercase tracking-widest text-red-300 hover:text-red-500 transition-colors">Reset All Counters</button>
+             </div>
+          </div>
+        </div>
+      )}
+
       {showManage && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
           <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col border border-white/50 overflow-hidden">
