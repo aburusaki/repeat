@@ -1,5 +1,5 @@
 
-import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { Category, Sentence, DailyStat } from '../types';
 
 const getSupabaseConfig = () => {
@@ -16,7 +16,6 @@ const getSupabaseConfig = () => {
   let envUrl = '';
   let envKey = '';
 
-  // 1. Try import.meta.env (Vite/Modern ESM)
   try {
     // @ts-ignore
     if (typeof import.meta !== 'undefined' && import.meta.env) {
@@ -27,10 +26,8 @@ const getSupabaseConfig = () => {
     }
   } catch (e) {}
 
-  // 2. Try window.process (Legacy/Polyfill)
   if (!envUrl) {
     try {
-      // Access via window to avoid ReferenceError on strict 'process' global
       const w = window as any;
       if (w.process && w.process.env) {
         envUrl = w.process.env.SUPABASE_URL;
@@ -64,28 +61,57 @@ export const supabaseService = {
     return !!(url && key && url.includes('supabase.co'));
   },
 
-  async testConnection(): Promise<{ success: boolean; message: string }> {
-    if (!this.isConfigured()) return { success: false, message: "Configuration missing." };
-    try {
-      const { error } = await this.getClient().from('categories').select('id').limit(1);
-      if (error) throw error;
-      return { success: true, message: "Connected!" };
-    } catch (e: any) {
-      return { success: false, message: e.message || "Failed." };
-    }
+  // --- AUTH METHODS ---
+
+  async getCurrentUser(): Promise<User | null> {
+    const { data: { session } } = await this.getClient().auth.getSession();
+    return session?.user || null;
   },
 
-  /**
-   * Fetches latest data and populates localStorage cache.
-   * Returns standardized Sentence objects.
-   */
+  async signIn(username: string, password: string): Promise<{ user: User | null; error: string | null }> {
+    // Proxy username to a fake email domain to satisfy Supabase requirements
+    const email = `${username.toLowerCase().replace(/\s/g, '')}@zen-counter.local`;
+    
+    const { data, error } = await this.getClient().auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) return { user: null, error: error.message };
+    return { user: data.user, error: null };
+  },
+
+  async signUp(username: string, password: string): Promise<{ user: User | null; error: string | null }> {
+    const email = `${username.toLowerCase().replace(/\s/g, '')}@zen-counter.local`;
+    
+    const { data, error } = await this.getClient().auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) return { user: null, error: error.message };
+    return { user: data.user, error: null };
+  },
+
+  async signOut(): Promise<void> {
+    await this.getClient().auth.signOut();
+    localStorage.removeItem('zen_categories_cache');
+    localStorage.removeItem('zen_sentences_cache');
+  },
+
+  // --- DATA METHODS ---
+
   async syncData(): Promise<Sentence[]> {
     if (!this.isConfigured()) return [];
     try {
+      const user = await this.getCurrentUser();
+      if (!user) return [];
+
       const client = this.getClient();
+      // We filter by user_id. Even with RLS enabled, explicit filtering is good practice.
       const [catsRes, sentsRes] = await Promise.all([
-        client.from('categories').select('*').order('name'),
-        client.from('sentences').select('id, text, sentence_categories(category_id)').order('created_at', { ascending: false })
+        client.from('categories').select('*').eq('user_id', user.id).order('name'),
+        client.from('sentences').select('id, text, sentence_categories(category_id)').eq('user_id', user.id).order('created_at', { ascending: false })
       ]);
 
       if (catsRes.error) throw catsRes.error;
@@ -111,10 +137,6 @@ export const supabaseService = {
     return this.syncData();
   },
 
-  /**
-   * Subscribes to changes in content AND stats.
-   * Uses polling as fallback if Realtime is not enabled on the table.
-   */
   subscribeToChanges(
     onContentChange: (sentences: Sentence[], categories: Category[]) => void,
     onStatsChange: (stats: DailyStat[]) => void
@@ -137,27 +159,20 @@ export const supabaseService = {
 
     const startPolling = () => {
       if (pollingInterval) return;
-      // Initial fetch to ensure data is fresh if realtime failed
       handleContentEvent();
       handleStatsEvent();
-      
       pollingInterval = setInterval(() => {
         handleContentEvent();
         handleStatsEvent();
-      }, 5000); // Poll every 5s
+      }, 5000); 
     };
 
     const channel = client.channel('public-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, handleContentEvent)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sentences' }, handleContentEvent)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentence_categories' }, handleContentEvent)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_stats' }, handleStatsEvent)
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-            console.log('Realtime subscription active!');
-        }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.warn('Realtime connection failed (likely Replication not enabled). Falling back to polling.');
             startPolling();
         }
       });
@@ -171,7 +186,10 @@ export const supabaseService = {
   async addCategory(name: string): Promise<{ data: Category | null; error: string | null }> {
     if (!this.isConfigured()) return { data: null, error: "Cloud not configured." };
     try {
-      const { data, error } = await this.getClient().from('categories').insert([{ name }]).select();
+      const user = await this.getCurrentUser();
+      if (!user) throw new Error("Not logged in");
+
+      const { data, error } = await this.getClient().from('categories').insert([{ name, user_id: user.id }]).select();
       if (error) return { data: null, error: error.message };
       await this.syncData(); 
       return { data: data?.[0] || null, error: null };
@@ -181,12 +199,21 @@ export const supabaseService = {
   async addSentence(text: string, categoryIds: (string | number)[]): Promise<{ success: boolean; error: string | null }> {
     if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
     try {
+      const user = await this.getCurrentUser();
+      if (!user) throw new Error("Not logged in");
+
       const client = this.getClient();
-      const { data: sentence, error: sError } = await client.from('sentences').insert([{ text }]).select();
+      const { data: sentence, error: sError } = await client.from('sentences').insert([{ text, user_id: user.id }]).select();
       if (sError) throw sError;
       
       if (sentence?.[0] && categoryIds.length > 0) {
-        const links = categoryIds.map(catId => ({ sentence_id: sentence[0].id, category_id: catId }));
+        // We also attach user_id to the junction table if your schema supports it, 
+        // otherwise RLS on the parent tables usually suffices, but explicitly is better.
+        const links = categoryIds.map(catId => ({ 
+            sentence_id: sentence[0].id, 
+            category_id: catId,
+            user_id: user.id 
+        }));
         const { error: linkError } = await client.from('sentence_categories').insert(links);
         if (linkError) throw linkError;
       }
@@ -199,16 +226,23 @@ export const supabaseService = {
   async updateSentence(id: string | number, text: string, categoryIds: (string | number)[]): Promise<{ success: boolean; error: string | null }> {
     if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
     try {
+      const user = await this.getCurrentUser();
+      if (!user) throw new Error("Not logged in");
+
       const client = this.getClient();
       
-      const { error: sError } = await client.from('sentences').update({ text }).eq('id', id);
+      const { error: sError } = await client.from('sentences').update({ text }).eq('id', id).eq('user_id', user.id);
       if (sError) throw sError;
       
-      const { error: delError } = await client.from('sentence_categories').delete().eq('sentence_id', id);
+      const { error: delError } = await client.from('sentence_categories').delete().eq('sentence_id', id); // RLS handles permission
       if (delError) throw delError;
 
       if (categoryIds.length > 0) {
-        const links = categoryIds.map(catId => ({ sentence_id: id, category_id: catId }));
+        const links = categoryIds.map(catId => ({ 
+            sentence_id: id, 
+            category_id: catId,
+            user_id: user.id 
+        }));
         const { error: insError } = await client.from('sentence_categories').insert(links);
         if (insError) throw insError;
       }
@@ -221,7 +255,10 @@ export const supabaseService = {
   async deleteSentence(id: string | number): Promise<{ success: boolean; error: string | null }> {
     if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
     try {
-      const { error } = await this.getClient().from('sentences').delete().eq('id', id);
+      const user = await this.getCurrentUser();
+      if (!user) throw new Error("Not logged in");
+
+      const { error } = await this.getClient().from('sentences').delete().eq('id', id).eq('user_id', user.id);
       if (error) throw error;
       await this.syncData();
       return { success: true, error: null };
@@ -235,9 +272,6 @@ export const supabaseService = {
     } catch { return []; }
   },
 
-  /**
-   * Returns a random Sentence object from cache.
-   */
   getRandomSentence(filterCategoryId?: string | number | 'all'): Sentence | null {
     try {
       const cached = localStorage.getItem('zen_sentences_cache');
@@ -253,16 +287,18 @@ export const supabaseService = {
     } catch { return null; }
   },
 
-  // --- STATS METHODS ---
-
   async getDailyStats(): Promise<DailyStat[]> {
     if (!this.isConfigured()) return [];
     try {
+      const user = await this.getCurrentUser();
+      if (!user) return [];
+
       const today = new Date().toISOString().split('T')[0];
       const { data, error } = await this.getClient()
         .from('daily_stats')
         .select('*')
-        .eq('date', today);
+        .eq('date', today)
+        .eq('user_id', user.id);
       
       if (error) throw error;
       return data || [];
@@ -275,6 +311,9 @@ export const supabaseService = {
   async incrementStat(sentenceId: string | number): Promise<void> {
     if (!this.isConfigured()) return;
     try {
+      const user = await this.getCurrentUser();
+      if (!user) return;
+
       const client = this.getClient();
       const today = new Date().toISOString().split('T')[0];
       
@@ -283,13 +322,19 @@ export const supabaseService = {
         .select('count')
         .eq('date', today)
         .eq('sentence_id', sentenceId)
+        .eq('user_id', user.id)
         .single();
       
       const newCount = (existing?.count || 0) + 1;
 
       const { error } = await client
         .from('daily_stats')
-        .upsert({ date: today, sentence_id: sentenceId, count: newCount }, { onConflict: 'date, sentence_id' });
+        .upsert({ 
+            date: today, 
+            sentence_id: sentenceId, 
+            count: newCount,
+            user_id: user.id 
+        }, { onConflict: 'date, sentence_id' }); // Note: unique constraint might need to include user_id in DB
         
       if (error) throw error;
     } catch (e) {
@@ -300,7 +345,9 @@ export const supabaseService = {
   async resetAllStats(): Promise<void> {
     if (!this.isConfigured()) return;
     try {
-       const { error } = await this.getClient().from('daily_stats').delete().neq('count', -1); // delete all
+       const user = await this.getCurrentUser();
+       if (!user) return;
+       const { error } = await this.getClient().from('daily_stats').delete().neq('count', -1).eq('user_id', user.id);
        if (error) throw error;
     } catch (e) {
       console.error('Reset Stats Error:', e);

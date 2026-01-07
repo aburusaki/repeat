@@ -2,8 +2,111 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabaseService } from './services/supabaseService';
 import { Category, Sentence, DailyStat } from './types';
+import { User } from '@supabase/supabase-js';
+
+// --- AUTH COMPONENT ---
+const AuthScreen: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
+  const [isLogin, setIsLogin] = useState(true);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    if (password.length < 6) {
+        setError("Password must be at least 6 characters");
+        setLoading(false);
+        return;
+    }
+
+    try {
+      const { error: apiError } = isLogin 
+        ? await supabaseService.signIn(username, password)
+        : await supabaseService.signUp(username, password);
+
+      if (apiError) {
+        setError(apiError);
+      } else {
+        if (!isLogin) {
+            // Auto login after signup if successful
+            await supabaseService.signIn(username, password);
+        }
+        onLogin();
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-6 transition-colors duration-500">
+       <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-50 dark:bg-blue-900/20 rounded-full blur-[120px] opacity-40"></div>
+      </div>
+      
+      <div className="relative z-10 w-full max-w-sm">
+        <div className="text-center mb-10">
+            <h1 className="text-3xl font-serif italic text-slate-800 dark:text-slate-100 mb-2">Zen Counter</h1>
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Your Personal Space</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-2">
+                <input 
+                    type="text" 
+                    placeholder="Username" 
+                    value={username} 
+                    onChange={e => setUsername(e.target.value)}
+                    className="w-full px-6 py-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-slate-200 placeholder-slate-400"
+                    required
+                />
+                <input 
+                    type="password" 
+                    placeholder="Password" 
+                    value={password} 
+                    onChange={e => setPassword(e.target.value)}
+                    className="w-full px-6 py-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800 dark:text-slate-200 placeholder-slate-400"
+                    required
+                />
+            </div>
+            
+            {error && <div className="text-red-500 text-xs text-center font-bold uppercase tracking-wider">{error}</div>}
+
+            <button 
+                type="submit" 
+                disabled={loading}
+                className="w-full py-4 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-2xl text-xs font-black uppercase tracking-[0.2em] hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+                {loading ? 'Processing...' : (isLogin ? 'Enter' : 'Create Account')}
+            </button>
+        </form>
+
+        <div className="mt-8 text-center">
+            <button 
+                onClick={() => { setIsLogin(!isLogin); setError(null); }}
+                className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-600 hover:text-slate-800 dark:hover:text-slate-300 transition-colors"
+            >
+                {isLogin ? "New here? Create Account" : "Have an account? Login"}
+            </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN APP ---
 
 const App: React.FC = () => {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+
+  // App State
   const [currentNumber, setCurrentNumber] = useState<number>(0);
   const [randomLimit, setRandomLimit] = useState<number>(3); 
   const [currentSentence, setCurrentSentence] = useState<Sentence | null>(null);
@@ -51,7 +154,16 @@ const App: React.FC = () => {
 
   const generateRandomLimit = () => 3;
 
+  // --- Auth Check ---
+  useEffect(() => {
+    supabaseService.getCurrentUser().then(user => {
+        setCurrentUser(user);
+        setLoadingAuth(false);
+    });
+  }, []);
+
   const refreshData = useCallback(async () => {
+    if (!currentUser) return;
     const sents = await supabaseService.syncData();
     const cats = supabaseService.getCategories();
     const stats = await supabaseService.getDailyStats();
@@ -59,7 +171,7 @@ const App: React.FC = () => {
     setAllSentences(sents);
     setAllCategories(cats);
     setDailyStats(stats);
-  }, []);
+  }, [currentUser]);
 
   const resetCycle = useCallback((mode: 'up' | 'down', focusId: string | number | 'all') => {
     const newLimit = generateRandomLimit();
@@ -81,13 +193,15 @@ const App: React.FC = () => {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  const toggleTheme = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const toggleTheme = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
+  // Data Initialization
   useEffect(() => {
-    // Initialization with safety check
+    if (!currentUser) return;
+
     const init = async () => {
       setIsSyncing(true);
       try {
@@ -101,7 +215,6 @@ const App: React.FC = () => {
     };
     init();
 
-    // Realtime subscription with safety check
     let unsubscribe = () => {};
     try {
       unsubscribe = supabaseService.subscribeToChanges(
@@ -120,7 +233,7 @@ const App: React.FC = () => {
     return () => {
       unsubscribe();
     };
-  }, [refreshData, resetCycle]); 
+  }, [currentUser, refreshData, resetCycle]); 
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
@@ -133,7 +246,6 @@ const App: React.FC = () => {
     
     // Optimistic Update for local feeling
     if (currentSentence) {
-       // Fire and forget - DB will sync back
        supabaseService.incrementStat(currentSentence.id);
     }
 
@@ -165,9 +277,11 @@ const App: React.FC = () => {
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
+    if (!currentUser) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
-        e.preventDefault(); // Prevent page scrolling if space is pressed
+        e.preventDefault(); 
         handleInteraction();
       }
     };
@@ -175,7 +289,6 @@ const App: React.FC = () => {
     const handleWheel = (e: WheelEvent) => {
       const now = Date.now();
       if (now - lastScrollTime.current < 600) return;
-
       if (e.deltaY < -10) {
         lastScrollTime.current = now;
         handleInteraction();
@@ -189,11 +302,8 @@ const App: React.FC = () => {
     const handleTouchMove = (e: TouchEvent) => {
       const now = Date.now();
       if (now - lastScrollTime.current < 600) return;
-
       const currentY = e.touches[0].clientY;
       const diff = currentY - touchStartY.current;
-
-      // Dragging UP means currentY is smaller than startY, so diff is negative.
       if (diff < -50) {
         lastScrollTime.current = now;
         handleInteraction();
@@ -212,7 +322,7 @@ const App: React.FC = () => {
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [handleInteraction]);
+  }, [handleInteraction, currentUser]);
 
   const toggleMode = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -273,9 +383,17 @@ const App: React.FC = () => {
   };
 
   const handleResetAllCounters = async () => {
-    if (confirm("Are you sure you want to reset all counters to 0? This cannot be undone.")) {
+    if (confirm("Are you sure you want to reset all counters to 0?")) {
       await supabaseService.resetAllStats();
     }
+  };
+
+  const handleLogout = async () => {
+    await supabaseService.signOut();
+    setCurrentUser(null);
+    setAllSentences([]);
+    setAllCategories([]);
+    setShowManage(false);
   };
 
   const filteredSentences = useMemo(() => {
@@ -297,6 +415,16 @@ const App: React.FC = () => {
       })
       .sort((a, b) => b.count - a.count);
   }, [dailyStats, allSentences]);
+
+  if (loadingAuth) {
+    return <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 flex items-center justify-center transition-colors duration-500">
+        <div className="text-slate-300 dark:text-slate-600 animate-pulse text-xs tracking-[0.5em] uppercase">Loading Space</div>
+    </div>;
+  }
+
+  if (!currentUser) {
+    return <AuthScreen onLogin={() => supabaseService.getCurrentUser().then(setCurrentUser)} />;
+  }
 
   return (
     <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 dark:bg-slate-950 transition-colors duration-500 overflow-hidden">
@@ -359,7 +487,12 @@ const App: React.FC = () => {
                   <button onClick={() => setActiveTab('library')} className={`text-[10px] font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${activeTab === 'library' ? 'text-slate-900 dark:text-slate-100 border-slate-900 dark:border-slate-100' : 'text-slate-300 dark:text-slate-600 border-transparent hover:text-slate-500 dark:hover:text-slate-400'}`}>Manage Library ({allSentences.length})</button>
                 </div>
               </div>
-              <button onClick={() => setShowManage(false)} className="px-8 py-3 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-100 dark:shadow-none">Close</button>
+              <div className="flex gap-4">
+                  <button onClick={handleLogout} className="px-6 py-3 bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-red-100 dark:hover:bg-red-900/40 transition-all">
+                    Log Out
+                  </button>
+                  <button onClick={() => setShowManage(false)} className="px-8 py-3 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-100 dark:shadow-none">Close</button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 md:p-12">
