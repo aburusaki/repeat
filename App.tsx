@@ -13,6 +13,14 @@ const App: React.FC = () => {
   const [showStats, setShowStats] = useState<boolean>(false);
   const [showManage, setShowManage] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
+  
+  // Theme State
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('theme') === 'dark' ? 'dark' : 'light';
+    }
+    return 'light';
+  });
 
   const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
 
@@ -62,15 +70,28 @@ const App: React.FC = () => {
     setCurrentNumber(mode === 'down' ? newLimit : 1);
   }, []);
 
+  // Theme Effect
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+
   useEffect(() => {
     // Initialization with safety check
     const init = async () => {
       setIsSyncing(true);
       try {
         await refreshData();
-        // Since resetCycle uses the state (sents), and state updates are async, 
-        // rely on the data being in local storage or next render. 
-        // But for simplicity, we call resetCycle immediately as supabaseService reads from local storage for random sentence.
         resetCycle('down', 'all'); 
       } catch (e) {
         console.error("Initialization failed:", e);
@@ -278,49 +299,49 @@ const App: React.FC = () => {
   }, [dailyStats, allSentences]);
 
   return (
-    <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 overflow-hidden">
+    <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 dark:bg-slate-950 transition-colors duration-500 overflow-hidden">
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-50 rounded-full blur-[120px] opacity-40"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-50 rounded-full blur-[120px] opacity-40"></div>
+        <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-50 dark:bg-blue-900/20 rounded-full blur-[120px] opacity-40 transition-colors duration-700"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-50 dark:bg-indigo-900/20 rounded-full blur-[120px] opacity-40 transition-colors duration-700"></div>
       </div>
 
       <div className={`relative z-10 text-center px-10 w-full max-w-5xl transition-all duration-700 ${showStats || showManage ? 'blur-md opacity-20 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
         <div className="flex flex-col items-center gap-2 mb-8">
            <div className={`flex items-center justify-center gap-4 transition-all duration-500 ease-in-out ${isAnimating ? 'opacity-20 -translate-y-1' : 'opacity-100 translate-y-0'}`}>
-            <div className="h-[1px] w-6 bg-slate-200"></div>
-            <div className="text-2xl md:text-3xl font-light text-slate-800 tracking-[0.3em] font-serif italic">{currentNumber}</div>
-            <div className="h-[1px] w-6 bg-slate-200"></div>
+            <div className="h-[1px] w-6 bg-slate-200 dark:bg-slate-800 transition-colors duration-500"></div>
+            <div className="text-2xl md:text-3xl font-light text-slate-800 dark:text-slate-100 tracking-[0.3em] font-serif italic transition-colors duration-500">{currentNumber}</div>
+            <div className="h-[1px] w-6 bg-slate-200 dark:bg-slate-800 transition-colors duration-500"></div>
           </div>
-          <div className={`text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 transition-opacity duration-300 ${isAnimating ? 'opacity-0' : 'opacity-100'}`}>
+          <div className={`text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500 transition-all duration-300 ${isAnimating ? 'opacity-0' : 'opacity-100'}`}>
             Today: {todayClickCount}
           </div>
         </div>
         
-        <div className={`text-4xl md:text-6xl lg:text-7xl font-serif italic text-slate-800 leading-[1.2] transition-all duration-700 ease-in-out ${isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0'}`}>
+        <div className={`text-4xl md:text-6xl lg:text-7xl font-serif italic text-slate-800 dark:text-slate-200 leading-[1.2] transition-all duration-700 ease-in-out ${isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0'}`}>
           {currentSentence?.text || '...'}
         </div>
       </div>
 
       {showStats && (
-        <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
-          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-lg flex flex-col border border-white/50 overflow-hidden max-h-[80vh]">
-            <div className="p-8 pb-6 flex justify-between items-center border-b border-slate-50">
-              <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400">Daily Logs</h2>
-              <button onClick={() => setShowStats(false)} className="px-6 py-2 bg-slate-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-200">Close</button>
+        <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 dark:bg-black/60 backdrop-blur-xl transition-colors duration-500">
+          <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-lg flex flex-col border border-white/50 dark:border-slate-800 overflow-hidden max-h-[80vh] transition-colors duration-500">
+            <div className="p-8 pb-6 flex justify-between items-center border-b border-slate-50 dark:border-slate-800">
+              <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400 dark:text-slate-500">Daily Logs</h2>
+              <button onClick={() => setShowStats(false)} className="px-6 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-200 dark:shadow-none">Close</button>
             </div>
             <div className="flex-1 overflow-y-auto p-8 space-y-4">
                {statsList.length === 0 ? (
-                 <div className="text-center py-10 text-slate-400 text-xs tracking-widest uppercase">No reflections yet today</div>
+                 <div className="text-center py-10 text-slate-400 dark:text-slate-600 text-xs tracking-widest uppercase">No reflections yet today</div>
                ) : (
                  statsList.map((stat, idx) => (
-                   <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                      <span className="text-sm font-serif italic text-slate-700 pr-4 line-clamp-2">"{stat.sentence}"</span>
-                      <span className="px-3 py-1 bg-white rounded-full text-[10px] font-black text-blue-600 shadow-sm border border-slate-100">{stat.count}</span>
+                   <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+                      <span className="text-sm font-serif italic text-slate-700 dark:text-slate-300 pr-4 line-clamp-2">"{stat.sentence}"</span>
+                      <span className="px-3 py-1 bg-white dark:bg-slate-900 rounded-full text-[10px] font-black text-blue-600 dark:text-blue-400 shadow-sm border border-slate-100 dark:border-slate-700">{stat.count}</span>
                    </div>
                  ))
                )}
             </div>
-             <div className="p-6 border-t border-slate-50 bg-slate-50/50 text-center">
+             <div className="p-6 border-t border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 text-center">
                 <button onClick={handleResetAllCounters} className="text-[9px] font-black uppercase tracking-widest text-red-300 hover:text-red-500 transition-colors">Reset All Counters</button>
              </div>
           </div>
@@ -328,17 +349,17 @@ const App: React.FC = () => {
       )}
 
       {showManage && (
-        <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
-          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col border border-white/50 overflow-hidden">
-            <div className="p-8 md:p-12 pb-6 flex justify-between items-center border-b border-slate-50">
+        <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 dark:bg-black/60 backdrop-blur-xl transition-colors duration-500">
+          <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col border border-white/50 dark:border-slate-800 overflow-hidden transition-colors duration-500">
+            <div className="p-8 md:p-12 pb-6 flex justify-between items-center border-b border-slate-50 dark:border-slate-800">
               <div className="space-y-4">
-                <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400">Content Studio</h2>
+                <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400 dark:text-slate-500">Content Studio</h2>
                 <div className="flex gap-6">
-                  <button onClick={() => setActiveTab('create')} className={`text-[10px] font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${activeTab === 'create' ? 'text-slate-900 border-slate-900' : 'text-slate-300 border-transparent hover:text-slate-500'}`}>Add Content</button>
-                  <button onClick={() => setActiveTab('library')} className={`text-[10px] font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${activeTab === 'library' ? 'text-slate-900 border-slate-900' : 'text-slate-300 border-transparent hover:text-slate-500'}`}>Manage Library ({allSentences.length})</button>
+                  <button onClick={() => setActiveTab('create')} className={`text-[10px] font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${activeTab === 'create' ? 'text-slate-900 dark:text-slate-100 border-slate-900 dark:border-slate-100' : 'text-slate-300 dark:text-slate-600 border-transparent hover:text-slate-500 dark:hover:text-slate-400'}`}>Add Content</button>
+                  <button onClick={() => setActiveTab('library')} className={`text-[10px] font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${activeTab === 'library' ? 'text-slate-900 dark:text-slate-100 border-slate-900 dark:border-slate-100' : 'text-slate-300 dark:text-slate-600 border-transparent hover:text-slate-500 dark:hover:text-slate-400'}`}>Manage Library ({allSentences.length})</button>
                 </div>
               </div>
-              <button onClick={() => setShowManage(false)} className="px-8 py-3 bg-slate-900 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-100">Close</button>
+              <button onClick={() => setShowManage(false)} className="px-8 py-3 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-100 dark:shadow-none">Close</button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 md:p-12">
@@ -346,34 +367,34 @@ const App: React.FC = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
                   <section className="space-y-8">
                     <div>
-                      <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.3em] mb-6">Create Categories</h3>
+                      <h3 className="text-[10px] font-black text-slate-900 dark:text-slate-100 uppercase tracking-[0.3em] mb-6">Create Categories</h3>
                       <form onSubmit={handleAddCategory} className="flex gap-2 mb-8">
-                        <input type="text" value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="e.g. Resilience" className="flex-1 px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all text-sm" />
-                        <button type="submit" disabled={isSyncing} className="px-6 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 disabled:opacity-50">Add</button>
+                        <input type="text" value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="e.g. Resilience" className="flex-1 px-5 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 transition-all text-sm text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600" />
+                        <button type="submit" disabled={isSyncing} className="px-6 py-4 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 disabled:opacity-50">Add</button>
                       </form>
                       <div className="flex flex-wrap gap-2">
                         {allCategories.map(cat => (
-                          <span key={cat.id} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-full text-[10px] font-bold uppercase tracking-wider">{cat.name}</span>
+                          <span key={cat.id} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-bold uppercase tracking-wider">{cat.name}</span>
                         ))}
                       </div>
                     </div>
                   </section>
 
                   <section className="space-y-8">
-                    <h3 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.3em] mb-6">New Sentence</h3>
+                    <h3 className="text-[10px] font-black text-slate-900 dark:text-slate-100 uppercase tracking-[0.3em] mb-6">New Sentence</h3>
                     <form onSubmit={handleAddSentence} className="space-y-8">
-                      <textarea value={newSentenceText} onChange={e => setNewSentenceText(e.target.value)} placeholder="Enter a sentence that appears on countdown zero..." rows={4} className="w-full px-6 py-5 bg-slate-50 border border-slate-100 rounded-3xl focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all text-sm font-serif italic" />
+                      <textarea value={newSentenceText} onChange={e => setNewSentenceText(e.target.value)} placeholder="Enter a sentence that appears on countdown zero..." rows={4} className="w-full px-6 py-5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-3xl focus:outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 transition-all text-sm font-serif italic text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600" />
                       <div className="space-y-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tag Categories</p>
+                        <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Tag Categories</p>
                         <div className="flex flex-wrap gap-2">
                           {allCategories.map(cat => (
-                            <button key={cat.id} type="button" onClick={() => setSelectedCats(prev => prev.includes(cat.id) ? prev.filter(c => c !== cat.id) : [...prev, cat.id])} className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${selectedCats.includes(cat.id) ? 'bg-blue-600 border-blue-600 text-white shadow-xl shadow-blue-50' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-400'}`}>
+                            <button key={cat.id} type="button" onClick={() => setSelectedCats(prev => prev.includes(cat.id) ? prev.filter(c => c !== cat.id) : [...prev, cat.id])} className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${selectedCats.includes(cat.id) ? 'bg-blue-600 border-blue-600 text-white shadow-xl shadow-blue-50 dark:shadow-none' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:border-slate-400 dark:hover:border-slate-500'}`}>
                               {cat.name}
                             </button>
                           ))}
                         </div>
                       </div>
-                      <button type="submit" disabled={isSyncing || !newSentenceText.trim()} className="w-full py-5 bg-blue-600 text-white rounded-3xl text-[10px] font-black uppercase tracking-[0.3em] hover:bg-blue-700 transition-all shadow-2xl shadow-blue-100 disabled:opacity-50">
+                      <button type="submit" disabled={isSyncing || !newSentenceText.trim()} className="w-full py-5 bg-blue-600 text-white rounded-3xl text-[10px] font-black uppercase tracking-[0.3em] hover:bg-blue-700 transition-all shadow-2xl shadow-blue-100 dark:shadow-none disabled:opacity-50">
                         {isSyncing ? 'Synchronizing...' : 'Commit to Cloud'}
                       </button>
                     </form>
@@ -388,17 +409,17 @@ const App: React.FC = () => {
                         placeholder="Search your wisdom library..." 
                         value={searchTerm}
                         onChange={e => setSearchTerm(e.target.value)}
-                        className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all text-sm italic font-serif"
+                        className="w-full px-8 py-5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 transition-all text-sm italic font-serif text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600"
                       />
-                      <svg xmlns="http://www.w3.org/2000/svg" className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-300" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                     </div>
 
                     <div className="flex flex-col gap-3">
-                      <p className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 ml-2">Browse by Category</p>
+                      <p className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500 ml-2">Browse by Category</p>
                       <div className="flex flex-wrap gap-2 overflow-x-auto pb-2 no-scrollbar">
                         <button 
                           onClick={() => setFilterCategoryId('all')}
-                          className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === 'all' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'}`}
+                          className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === 'all' ? 'bg-slate-900 dark:bg-slate-100 border-slate-900 dark:border-slate-100 text-white dark:text-slate-900' : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:border-slate-300 dark:hover:border-slate-600'}`}
                         >
                           All Entries
                         </button>
@@ -406,7 +427,7 @@ const App: React.FC = () => {
                           <button 
                             key={cat.id} 
                             onClick={() => setFilterCategoryId(cat.id)}
-                            className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === cat.id ? 'bg-slate-900 border-slate-900 text-white shadow-lg' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'}`}
+                            className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === cat.id ? 'bg-slate-900 dark:bg-slate-100 border-slate-900 dark:border-slate-100 text-white dark:text-slate-900 shadow-lg' : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:border-slate-300 dark:hover:border-slate-600'}`}
                           >
                             {cat.name}
                           </button>
@@ -417,13 +438,13 @@ const App: React.FC = () => {
 
                   <div className="space-y-4">
                     {filteredSentences.map(s => (
-                      <div key={s.id} className={`p-8 rounded-3xl border transition-all ${editingId === s.id ? 'bg-blue-50/50 border-blue-200 ring-2 ring-blue-50' : 'bg-white border-slate-100 hover:border-slate-300 shadow-sm hover:shadow-md'}`}>
+                      <div key={s.id} className={`p-8 rounded-3xl border transition-all ${editingId === s.id ? 'bg-blue-50/50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 ring-2 ring-blue-50 dark:ring-blue-900' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm hover:shadow-md'}`}>
                         {editingId === s.id ? (
                           <div className="space-y-6">
                             <textarea 
                               value={editForm.text} 
                               onChange={e => setEditForm(prev => ({ ...prev, text: e.target.value }))}
-                              className="w-full p-6 bg-white border border-blue-100 rounded-2xl text-sm font-serif italic focus:outline-none focus:ring-2 focus:ring-blue-200"
+                              className="w-full p-6 bg-white dark:bg-slate-950 border border-blue-100 dark:border-blue-900 rounded-2xl text-sm font-serif italic focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 text-slate-800 dark:text-slate-200"
                               rows={3}
                             />
                             <div className="flex flex-wrap gap-2">
@@ -432,33 +453,33 @@ const App: React.FC = () => {
                                   key={cat.id} 
                                   type="button" 
                                   onClick={() => setEditForm(prev => ({ ...prev, categoryIds: prev.categoryIds.includes(cat.id) ? prev.categoryIds.filter(id => id !== cat.id) : [...prev.categoryIds, cat.id] }))}
-                                  className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border transition-all ${editForm.categoryIds.includes(cat.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-400'}`}
+                                  className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border transition-all ${editForm.categoryIds.includes(cat.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500'}`}
                                 >
                                   {cat.name}
                                 </button>
                               ))}
                             </div>
                             <div className="flex gap-3 justify-end pt-4">
-                              <button onClick={() => setEditingId(null)} className="px-6 py-2 bg-slate-200 text-slate-600 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-300">Cancel</button>
-                              <button onClick={() => handleUpdateSentence(s.id)} disabled={isSyncing} className="px-6 py-2 bg-blue-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-lg shadow-blue-100">Save Changes</button>
+                              <button onClick={() => setEditingId(null)} className="px-6 py-2 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 dark:hover:bg-slate-700">Cancel</button>
+                              <button onClick={() => handleUpdateSentence(s.id)} disabled={isSyncing} className="px-6 py-2 bg-blue-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-lg shadow-blue-100 dark:shadow-none">Save Changes</button>
                             </div>
                           </div>
                         ) : (
                           <div className="flex flex-col md:flex-row justify-between gap-6">
                             <div className="space-y-4">
-                              <p className="text-lg font-serif italic text-slate-800 leading-relaxed">"{s.text}"</p>
+                              <p className="text-lg font-serif italic text-slate-800 dark:text-slate-200 leading-relaxed">"{s.text}"</p>
                               <div className="flex flex-wrap gap-2">
                                 {(s.categoryIds || []).map(catId => {
                                   const cat = allCategories.find(c => c.id === catId);
-                                  return cat ? <span key={catId} className="px-3 py-1 bg-slate-50 text-slate-400 rounded-full text-[9px] font-black uppercase tracking-widest border border-slate-100">{cat.name}</span> : null;
+                                  return cat ? <span key={catId} className="px-3 py-1 bg-slate-50 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-full text-[9px] font-black uppercase tracking-widest border border-slate-100 dark:border-slate-700">{cat.name}</span> : null;
                                 })}
                               </div>
                             </div>
                             <div className="flex gap-2 items-center justify-end">
-                              <button onClick={() => handleStartEdit(s)} className="p-3 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-all">
+                              <button onClick={() => handleStartEdit(s)} className="p-3 text-slate-400 dark:text-slate-600 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full transition-all">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121(0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                               </button>
-                              <button onClick={() => handleDeleteSentence(s.id)} className="p-3 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-all">
+                              <button onClick={() => handleDeleteSentence(s.id)} className="p-3 text-slate-400 dark:text-slate-600 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-all">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
                               </button>
                             </div>
@@ -479,7 +500,7 @@ const App: React.FC = () => {
         <div className="w-full max-w-xs md:max-w-md px-6 overflow-x-auto no-scrollbar flex items-center justify-center gap-4 py-2">
             <button 
               onClick={(e) => handleFocusChange(e, 'all')}
-              className={`text-[8px] font-black uppercase tracking-[0.3em] transition-all px-3 py-1 rounded-full whitespace-nowrap ${sessionFocusId === 'all' ? 'text-blue-600 bg-blue-50' : 'text-slate-300 hover:text-slate-500'}`}
+              className={`text-[8px] font-black uppercase tracking-[0.3em] transition-all px-3 py-1 rounded-full whitespace-nowrap ${sessionFocusId === 'all' ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400'}`}
             >
               All Wisdom
             </button>
@@ -487,7 +508,7 @@ const App: React.FC = () => {
               <button 
                 key={cat.id}
                 onClick={(e) => handleFocusChange(e, cat.id)}
-                className={`text-[8px] font-black uppercase tracking-[0.3em] transition-all px-3 py-1 rounded-full whitespace-nowrap ${sessionFocusId === cat.id ? 'text-blue-600 bg-blue-50' : 'text-slate-300 hover:text-slate-500'}`}
+                className={`text-[8px] font-black uppercase tracking-[0.3em] transition-all px-3 py-1 rounded-full whitespace-nowrap ${sessionFocusId === cat.id ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400'}`}
               >
                 {cat.name}
               </button>
@@ -495,21 +516,30 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex gap-10 items-center">
-          <button onClick={(e) => { e.stopPropagation(); setShowStats(true); }} className="text-slate-300 text-[10px] font-black tracking-[0.4em] uppercase hover:text-slate-900 transition-colors">Logs</button>
+          <button onClick={(e) => { e.stopPropagation(); setShowStats(true); }} className="text-slate-300 dark:text-slate-600 text-[10px] font-black tracking-[0.4em] uppercase hover:text-slate-900 dark:hover:text-slate-300 transition-colors">Logs</button>
           
-          <div className="flex flex-col items-center gap-2">
-            <button onClick={(e) => { e.stopPropagation(); setShowManage(true); }} className="group p-3 text-slate-300 hover:text-slate-900 transition-all rounded-full border border-slate-100 bg-white shadow-sm hover:shadow-md hover:-translate-y-0.5">
+          <div className="flex items-center gap-4">
+            <button onClick={(e) => { e.stopPropagation(); setShowManage(true); }} className="group p-3 text-slate-300 dark:text-slate-600 hover:text-slate-900 dark:hover:text-slate-300 transition-all rounded-full border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:shadow-md hover:-translate-y-0.5">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:rotate-12 transition-transform"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121(0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
             </button>
+            
+            <button onClick={toggleTheme} className="group p-3 text-slate-300 dark:text-slate-600 hover:text-slate-900 dark:hover:text-slate-300 transition-all rounded-full border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:shadow-md hover:-translate-y-0.5">
+               {theme === 'light' ? (
+                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+               ) : (
+                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+               )}
+            </button>
+
             <button 
               onClick={toggleMode} 
-              className="text-[8px] font-black uppercase tracking-widest text-slate-300 hover:text-blue-500 transition-colors"
+              className="text-[8px] font-black uppercase tracking-widest text-slate-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 transition-colors min-w-[60px]"
             >
               {counterMode === 'down' ? 'Descend' : 'Ascend'}
             </button>
           </div>
 
-          <div className={`text-slate-300 text-[10px] font-black tracking-[0.4em] uppercase transition-all ${isSyncing ? 'opacity-100 text-blue-400 animate-pulse' : 'opacity-40'}`}>
+          <div className={`text-slate-300 dark:text-slate-600 text-[10px] font-black tracking-[0.4em] uppercase transition-all ${isSyncing ? 'opacity-100 text-blue-400 dark:text-blue-500 animate-pulse' : 'opacity-40'}`}>
             {isSyncing ? 'Sync' : 'Live'}
           </div>
         </div>
@@ -520,8 +550,8 @@ const App: React.FC = () => {
                 key={i} 
                 className={`h-[2px] rounded-full transition-all duration-700 ease-out 
                   ${counterMode === 'down' 
-                    ? (i < currentNumber ? 'bg-slate-400 w-5' : 'bg-slate-200 w-1.5') 
-                    : (i >= currentNumber ? 'bg-slate-200 w-1.5' : 'bg-slate-400 w-5')
+                    ? (i < currentNumber ? 'bg-slate-400 dark:bg-slate-500 w-5' : 'bg-slate-200 dark:bg-slate-800 w-1.5') 
+                    : (i >= currentNumber ? 'bg-slate-200 dark:bg-slate-800 w-1.5' : 'bg-slate-400 dark:bg-slate-500 w-5')
                   }`} 
              />
            ))}
