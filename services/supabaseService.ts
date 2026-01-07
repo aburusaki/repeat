@@ -1,6 +1,6 @@
 
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
-import { Category, Sentence } from '../types';
+import { Category, Sentence, DailyStat } from '../types';
 
 const getSupabaseConfig = () => {
   const manualUrl = localStorage.getItem('SB_OVERRIDE_URL');
@@ -92,35 +92,39 @@ export const supabaseService = {
   },
 
   async getSentences(): Promise<Sentence[]> {
-    // We prefer calling syncData as it maintains the localStorage cache used by getRandomSentence
     return this.syncData();
   },
 
-  subscribeToChanges(callback: (sentences: Sentence[], categories: Category[]) => void): () => void {
+  /**
+   * Subscribes to changes in content AND stats.
+   */
+  subscribeToChanges(
+    onContentChange: (sentences: Sentence[], categories: Category[]) => void,
+    onStatsChange: (stats: DailyStat[]) => void
+  ): () => void {
     if (!this.isConfigured()) return () => {};
     
     const client = this.getClient();
     
-    const handleEvent = async () => {
+    const handleContentEvent = async () => {
       const sents = await this.syncData();
       const cats = this.getCategories();
-      callback(sents, cats);
+      onContentChange(sents, cats);
+    };
+
+    const handleStatsEvent = async () => {
+      const stats = await this.getDailyStats();
+      onStatsChange(stats);
     };
 
     const channel = client.channel('public-db-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, handleEvent)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentences' }, handleEvent)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentence_categories' }, handleEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, handleContentEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentences' }, handleContentEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sentence_categories' }, handleContentEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_stats' }, handleStatsEvent)
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('Realtime subscription active!');
-        }
-        if (status === 'CHANNEL_ERROR') {
-          console.error('Realtime connection failed. Check if Replication is enabled in Supabase Dashboard -> Database -> Replication.');
-        }
-        if (status === 'TIMED_OUT') {
-          console.warn('Realtime connection timed out.');
-        }
+        if (status === 'SUBSCRIBED') console.log('Realtime subscription active!');
+        if (status === 'CHANNEL_ERROR') console.error('Realtime connection failed. Ensure Replication is enabled.');
       });
 
     return () => {
@@ -153,10 +157,7 @@ export const supabaseService = {
       
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) { 
-      console.error("Add Sentence Error:", e);
-      return { success: false, error: e.message }; 
-    }
+    } catch (e: any) { return { success: false, error: e.message }; }
   },
 
   async updateSentence(id: string | number, text: string, categoryIds: (string | number)[]): Promise<{ success: boolean; error: string | null }> {
@@ -164,11 +165,9 @@ export const supabaseService = {
     try {
       const client = this.getClient();
       
-      // 1. Update text
       const { error: sError } = await client.from('sentences').update({ text }).eq('id', id);
       if (sError) throw sError;
       
-      // 2. Update Categories (Delete old then Add new)
       const { error: delError } = await client.from('sentence_categories').delete().eq('sentence_id', id);
       if (delError) throw delError;
 
@@ -178,13 +177,9 @@ export const supabaseService = {
         if (insError) throw insError;
       }
       
-      // 3. Re-sync cache immediately
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) { 
-      console.error("Update Sentence Error:", e);
-      return { success: false, error: e.message }; 
-    }
+    } catch (e: any) { return { success: false, error: e.message }; }
   },
 
   async deleteSentence(id: string | number): Promise<{ success: boolean; error: string | null }> {
@@ -194,10 +189,7 @@ export const supabaseService = {
       if (error) throw error;
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) { 
-      console.error("Delete Sentence Error:", e);
-      return { success: false, error: e.message }; 
-    }
+    } catch (e: any) { return { success: false, error: e.message }; }
   },
 
   getCategories(): Category[] {
@@ -207,7 +199,10 @@ export const supabaseService = {
     } catch { return []; }
   },
 
-  getRandomSentence(filterCategoryId?: string | number | 'all'): string {
+  /**
+   * Returns a random Sentence object from cache.
+   */
+  getRandomSentence(filterCategoryId?: string | number | 'all'): Sentence | null {
     try {
       const cached = localStorage.getItem('zen_sentences_cache');
       let sentences: Sentence[] = cached ? JSON.parse(cached) : [];
@@ -216,13 +211,69 @@ export const supabaseService = {
         sentences = sentences.filter(s => (s.categoryIds || []).includes(filterCategoryId));
       }
 
-      if (sentences.length === 0) {
-        return filterCategoryId && filterCategoryId !== 'all' 
-          ? "This theme awaits your wisdom." 
-          : "Adopt the pace of nature: her secret is patience.";
-      }
+      if (sentences.length === 0) return null;
       
-      return sentences[Math.floor(Math.random() * sentences.length)].text;
-    } catch { return "True peace comes from within."; }
+      return sentences[Math.floor(Math.random() * sentences.length)];
+    } catch { return null; }
+  },
+
+  // --- STATS METHODS ---
+
+  async getDailyStats(): Promise<DailyStat[]> {
+    if (!this.isConfigured()) return [];
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const { data, error } = await this.getClient()
+        .from('daily_stats')
+        .select('*')
+        .eq('date', today);
+      
+      if (error) throw error;
+      return data || [];
+    } catch (e) {
+      console.error('Get Stats Error:', e);
+      return [];
+    }
+  },
+
+  async incrementStat(sentenceId: string | number): Promise<void> {
+    if (!this.isConfigured()) return;
+    try {
+      const client = this.getClient();
+      const today = new Date().toISOString().split('T')[0];
+
+      // Try to fetch existing first to increment, or use upsert with a known count if possible.
+      // Since we don't have an atomic increment RPC easily set up by user, we do a quick select-update or upsert.
+      // An upsert with On Conflict is best.
+      // But standard Supabase upsert requires us to know the new value.
+      
+      const { data: existing } = await client
+        .from('daily_stats')
+        .select('count')
+        .eq('date', today)
+        .eq('sentence_id', sentenceId)
+        .single();
+      
+      const newCount = (existing?.count || 0) + 1;
+
+      const { error } = await client
+        .from('daily_stats')
+        .upsert({ date: today, sentence_id: sentenceId, count: newCount }, { onConflict: 'date, sentence_id' });
+        
+      if (error) throw error;
+    } catch (e) {
+      console.error('Increment Stat Error:', e);
+    }
+  },
+
+  async resetAllStats(): Promise<void> {
+    if (!this.isConfigured()) return;
+    try {
+       // Delete all stats (or just today's, but prompt said "reset all counters")
+       const { error } = await this.getClient().from('daily_stats').delete().neq('count', -1); // delete all
+       if (error) throw error;
+    } catch (e) {
+      console.error('Reset Stats Error:', e);
+    }
   }
 };

@@ -1,77 +1,85 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabaseService } from './services/supabaseService';
-import { statsService } from './services/statsService';
-import { Category, Sentence } from './types';
+import { Category, Sentence, DailyStat } from './types';
 
 const App: React.FC = () => {
   const [currentNumber, setCurrentNumber] = useState<number>(0);
   const [randomLimit, setRandomLimit] = useState<number>(5); 
-  const [currentSentence, setCurrentSentence] = useState<string>('');
+  const [currentSentence, setCurrentSentence] = useState<Sentence | null>(null);
   const [counterMode, setCounterMode] = useState<'up' | 'down'>('down');
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
   const [showStats, setShowStats] = useState<boolean>(false);
   const [showManage, setShowManage] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
-  
-  // Track stats version to force UI updates when stats are reset
-  const [statsVersion, setStatsVersion] = useState<number>(0);
 
   const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
 
+  // Data State
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
+  const [allSentences, setAllSentences] = useState<Sentence[]>([]);
+  const [dailyStats, setDailyStats] = useState<DailyStat[]>([]);
+
+  // Form State
   const [newCategory, setNewCategory] = useState('');
   const [newSentenceText, setNewSentenceText] = useState('');
   const [selectedCats, setSelectedCats] = useState<(string | number)[]>([]);
-  const [allCategories, setAllCategories] = useState<Category[]>([]);
-  const [allSentences, setAllSentences] = useState<Sentence[]>([]);
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [editForm, setEditForm] = useState<{ text: string; categoryIds: (string | number)[] }>({ text: '', categoryIds: [] });
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategoryId, setFilterCategoryId] = useState<string | number | 'all'>('all');
 
+  // Derived State
   const todayClickCount = useMemo(() => {
-    return statsService.getSentenceCount(currentSentence);
-  }, [currentSentence, currentNumber, statsVersion]);
+    if (!currentSentence) return 0;
+    const stat = dailyStats.find(s => String(s.sentence_id) === String(currentSentence.id));
+    return stat ? stat.count : 0;
+  }, [currentSentence, dailyStats]);
 
   const generateRandomLimit = () => Math.floor(Math.random() * 5) + 1;
 
-  const loadData = useCallback(async () => {
-    setIsSyncing(true);
-    const status = await supabaseService.testConnection();
-    if (status.success) {
-      const sents = await supabaseService.syncData();
-      setAllCategories(supabaseService.getCategories());
-      setAllSentences(sents);
-    }
-    setIsSyncing(false);
+  const refreshData = useCallback(async () => {
+    const sents = await supabaseService.syncData();
+    const cats = supabaseService.getCategories();
+    const stats = await supabaseService.getDailyStats();
+    
+    setAllSentences(sents);
+    setAllCategories(cats);
+    setDailyStats(stats);
   }, []);
 
   const resetCycle = useCallback((mode: 'up' | 'down', focusId: string | number | 'all') => {
     const newLimit = generateRandomLimit();
-    const newSentence = supabaseService.getRandomSentence(focusId);
+    const newSentenceObj = supabaseService.getRandomSentence(focusId);
     
     setRandomLimit(newLimit);
-    setCurrentSentence(newSentence);
+    setCurrentSentence(newSentenceObj);
     setCurrentNumber(mode === 'down' ? newLimit : 1);
   }, []);
 
   useEffect(() => {
-    statsService.pruneStats();
-    loadData().then(() => {
+    setIsSyncing(true);
+    refreshData().then(() => {
+      setIsSyncing(false);
       resetCycle(counterMode, sessionFocusId);
     });
 
     // Realtime subscription
-    const unsubscribe = supabaseService.subscribeToChanges((sents, cats) => {
-      setAllCategories(cats);
-      setAllSentences(sents);
-    });
+    const unsubscribe = supabaseService.subscribeToChanges(
+      (sents, cats) => {
+        setAllSentences(sents);
+        setAllCategories(cats);
+      },
+      (stats) => {
+        setDailyStats(stats);
+      }
+    );
 
     return () => {
       unsubscribe();
     };
-  }, [loadData]);
+  }, [refreshData]); // Only on mount/refresh logic changes
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
@@ -80,11 +88,12 @@ const App: React.FC = () => {
   };
 
   const handleInteraction = useCallback(() => {
-    if (isAnimating || isSyncing || showStats || showManage) return;
+    if (isAnimating || showStats || showManage) return;
     
+    // Optimistic Update for local feeling
     if (currentSentence) {
-      statsService.recordClick(currentSentence);
-      setStatsVersion(v => v + 1);
+       // Fire and forget - DB will sync back
+       supabaseService.incrementStat(currentSentence.id);
     }
 
     setIsAnimating(true);
@@ -111,7 +120,7 @@ const App: React.FC = () => {
       });
       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, isSyncing, showStats, showManage, currentSentence, counterMode, sessionFocusId, randomLimit]);
+  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, randomLimit]);
 
   const toggleMode = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -129,7 +138,7 @@ const App: React.FC = () => {
     if (error) alert(`Category Error: ${error}`);
     else {
       setNewCategory('');
-      await loadData();
+      // Subscription updates state
     }
     setIsSyncing(false);
   };
@@ -140,11 +149,11 @@ const App: React.FC = () => {
     if (!text) return;
     setIsSyncing(true);
     const { success, error } = await supabaseService.addSentence(text, selectedCats);
-    if (error) alert(`Save Error: ${error}\n\nTip: Check if RLS policies are enabled on your Supabase tables.`);
-    if (success) {
+    if (!success) alert(`Save Error: ${error}`);
+    else {
       setNewSentenceText('');
       setSelectedCats([]);
-      await loadData();
+      // Subscription updates state
     }
     setIsSyncing(false);
   };
@@ -159,10 +168,8 @@ const App: React.FC = () => {
     const { success, error } = await supabaseService.updateSentence(id, editForm.text, editForm.categoryIds);
     if (success) {
       setEditingId(null);
-      // Immediately refresh the list from the newly synced cloud data
-      setAllSentences(await supabaseService.getSentences());
     } else {
-      alert(`Update Error: ${error}\n\nEnsure you have 'UPDATE' and 'DELETE' (for categories) permissions in Supabase.`);
+      alert(`Update Error: ${error}`);
     }
     setIsSyncing(false);
   };
@@ -171,15 +178,14 @@ const App: React.FC = () => {
     if (!confirm("Delete this entry permanently?")) return;
     setIsSyncing(true);
     const { success, error } = await supabaseService.deleteSentence(id);
-    if (success) await loadData();
-    else alert(`Delete Error: ${error}`);
+    if (!success) alert(`Delete Error: ${error}`);
     setIsSyncing(false);
   };
 
-  const handleResetAllCounters = () => {
+  const handleResetAllCounters = async () => {
     if (confirm("Are you sure you want to reset all counters to 0? This cannot be undone.")) {
-      statsService.resetAllStats();
-      setStatsVersion(v => v + 1);
+      await supabaseService.resetAllStats();
+      // Subscription handles the UI update
     }
   };
 
@@ -190,6 +196,19 @@ const App: React.FC = () => {
       return matchesSearch && matchesCategory;
     });
   }, [allSentences, searchTerm, filterCategoryId]);
+
+  const statsList = useMemo(() => {
+    // Map stats to sentence text for display
+    return dailyStats
+      .map(stat => {
+        const s = allSentences.find(sent => String(sent.id) === String(stat.sentence_id));
+        return {
+          sentence: s ? s.text : 'Unknown',
+          count: stat.count
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+  }, [dailyStats, allSentences]);
 
   return (
     <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 overflow-hidden">
@@ -211,7 +230,7 @@ const App: React.FC = () => {
         </div>
         
         <div className={`text-4xl md:text-6xl lg:text-7xl font-serif italic text-slate-800 leading-[1.2] transition-all duration-700 ease-in-out ${isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0'}`}>
-          {currentSentence || '...'}
+          {currentSentence?.text || '...'}
         </div>
       </div>
 
@@ -367,10 +386,10 @@ const App: React.FC = () => {
            <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-lg text-center space-y-8 flex flex-col max-h-[85vh]">
               <h2 className="text-xs font-black tracking-[0.4em] uppercase text-slate-400">Activity Logs</h2>
               <div className="space-y-4 overflow-y-auto flex-1 pr-2 no-scrollbar">
-                {statsService.getStatsForDate().length === 0 ? (
+                {statsList.length === 0 ? (
                   <div className="py-20 text-slate-300 italic text-sm">No activity recorded today</div>
                 ) : (
-                  statsService.getStatsForDate().map((stat, i) => (
+                  statsList.map((stat, i) => (
                     <div key={i} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
                       <span className="text-xs font-serif italic text-slate-600 truncate mr-4 text-left">"{stat.sentence}"</span>
                       <span className="text-[10px] font-black text-slate-900 px-3 py-1 bg-white rounded-lg shadow-sm">{stat.count}</span>

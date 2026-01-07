@@ -22,3 +22,9 @@ export interface SupabaseConfig {
   url: string;
   key: string;
 }
+
+export interface DailyStat {
+  date: string;
+  sentence_id: string | number;
+  count: number;
+}
