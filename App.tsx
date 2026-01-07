@@ -161,14 +161,12 @@ const App: React.FC = () => {
       const currentY = e.touches[0].clientY;
       const diff = currentY - touchStartY.current;
 
-      // "Scrolling Up" visually means dragging finger DOWN.
-      // So we look for positive difference.
-      // Using 50px threshold to be intentional.
-      if (diff > 50) {
+      // Dragging UP means currentY is smaller than startY, so diff is negative.
+      // e.g., Start at 500, move to 400 -> diff = -100.
+      if (diff < -50) {
         lastScrollTime.current = now;
         handleInteraction();
         // Reset anchor to support continuous slow dragging 
-        // effectively requiring a "fresh" 50px movement for next trigger
         touchStartY.current = currentY;
       }
     };
