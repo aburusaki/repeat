@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabaseService } from './services/supabaseService';
 import { Category, Sentence, DailyStat } from './types';
 
@@ -15,6 +15,9 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
 
   const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
+
+  // Interaction throttling refs
+  const lastScrollTime = useRef<number>(0);
 
   // Data State
   const [allCategories, setAllCategories] = useState<Category[]>([]);
@@ -121,6 +124,38 @@ const App: React.FC = () => {
       setIsAnimating(false);
     }, 250);
   }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, randomLimit]);
+
+  // Keyboard and Scroll Interaction Effects
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault(); // Prevent page scrolling if space is pressed
+        handleInteraction();
+      }
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      const now = Date.now();
+      
+      // Throttle scroll: If less than 600ms has passed since last scroll action, ignore.
+      // This prevents momentum scrolling from triggering multiple changes.
+      if (now - lastScrollTime.current < 600) return;
+
+      // Check for scroll up (negative deltaY). 
+      if (e.deltaY < -10) {
+        lastScrollTime.current = now;
+        handleInteraction();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('wheel', handleWheel);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleInteraction]);
 
   const toggleMode = (e: React.MouseEvent) => {
     e.stopPropagation();
