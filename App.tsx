@@ -5,7 +5,7 @@ import { Category, Sentence, DailyStat } from './types';
 
 const App: React.FC = () => {
   const [currentNumber, setCurrentNumber] = useState<number>(0);
-  const [randomLimit, setRandomLimit] = useState<number>(5); 
+  const [randomLimit, setRandomLimit] = useState<number>(3); 
   const [currentSentence, setCurrentSentence] = useState<Sentence | null>(null);
   const [counterMode, setCounterMode] = useState<'up' | 'down'>('down');
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
@@ -49,7 +49,7 @@ const App: React.FC = () => {
     return stat ? stat.count : 0;
   }, [currentSentence, dailyStats]);
 
-  const generateRandomLimit = () => Math.floor(Math.random() * 5) + 1;
+  const generateRandomLimit = () => 3;
 
   const refreshData = useCallback(async () => {
     const sents = await supabaseService.syncData();
