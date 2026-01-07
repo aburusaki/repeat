@@ -18,6 +18,7 @@ const App: React.FC = () => {
 
   // Interaction throttling refs
   const lastScrollTime = useRef<number>(0);
+  const touchStartY = useRef<number>(0);
 
   // Data State
   const [allCategories, setAllCategories] = useState<Category[]>([]);
@@ -148,12 +149,42 @@ const App: React.FC = () => {
       }
     };
 
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartY.current = e.touches[0].clientY;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const now = Date.now();
+      // Throttle for touch as well
+      if (now - lastScrollTime.current < 600) return;
+
+      const currentY = e.touches[0].clientY;
+      const diff = currentY - touchStartY.current;
+
+      // "Scrolling Up" visually means dragging finger DOWN.
+      // So we look for positive difference.
+      // Using 50px threshold to be intentional.
+      if (diff > 50) {
+        lastScrollTime.current = now;
+        handleInteraction();
+        // Reset anchor to support continuous slow dragging 
+        // effectively requiring a "fresh" 50px movement for next trigger
+        touchStartY.current = currentY;
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('wheel', handleWheel);
+    window.addEventListener('touchstart', handleTouchStart);
+    // passive: false allows us to potentially preventDefault if needed, but we aren't doing it to keep simple.
+    // However, touchmove listeners on window are passive by default in some browsers.
+    window.addEventListener('touchmove', handleTouchMove);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchmove', handleTouchMove);
     };
   }, [handleInteraction]);
 
@@ -413,30 +444,6 @@ const App: React.FC = () => {
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {showStats && (
-        <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 backdrop-blur-xl">
-           <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-lg text-center space-y-8 flex flex-col max-h-[85vh]">
-              <h2 className="text-xs font-black tracking-[0.4em] uppercase text-slate-400">Activity Logs</h2>
-              <div className="space-y-4 overflow-y-auto flex-1 pr-2 no-scrollbar">
-                {statsList.length === 0 ? (
-                  <div className="py-20 text-slate-300 italic text-sm">No activity recorded today</div>
-                ) : (
-                  statsList.map((stat, i) => (
-                    <div key={i} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl">
-                      <span className="text-xs font-serif italic text-slate-600 truncate mr-4 text-left">"{stat.sentence}"</span>
-                      <span className="text-[10px] font-black text-slate-900 px-3 py-1 bg-white rounded-lg shadow-sm">{stat.count}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-              <div className="flex flex-col gap-3 pt-4 border-t border-slate-50">
-                <button onClick={handleResetAllCounters} className="w-full py-4 bg-red-50 text-red-500 rounded-3xl text-[10px] font-black uppercase tracking-widest hover:bg-red-100 transition-colors">Reset All Counters</button>
-                <button onClick={() => setShowStats(false)} className="w-full py-4 bg-slate-900 text-white rounded-3xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-slate-200">Done</button>
-              </div>
-           </div>
         </div>
       )}
 
