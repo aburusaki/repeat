@@ -4,6 +4,76 @@ import { supabaseService } from './services/supabaseService';
 import { Category, Sentence, DailyStat } from './types';
 import { User } from '@supabase/supabase-js';
 
+// --- HELPER: TIME FORMATTER ---
+const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m ${s}s`;
+};
+
+// --- CHART COMPONENT ---
+const StatsChart: React.FC<{ stats: DailyStat[] }> = ({ stats }) => {
+  const chartData = useMemo(() => {
+    // Generate last 7 days including today
+    const days = [];
+    const today = new Date();
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        days.push(d.toISOString().split('T')[0]);
+    }
+
+    const aggregated = days.map(dateStr => {
+        const total = stats
+            .filter(s => s.date === dateStr)
+            .reduce((sum, curr) => sum + curr.count, 0);
+        
+        const dateObj = new Date(dateStr);
+        // Format: "Mon", "Tue" etc.
+        const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'narrow' });
+        
+        return { date: dateStr, total, dayName };
+    });
+
+    return aggregated;
+  }, [stats]);
+
+  const maxVal = Math.max(...chartData.map(d => d.total), 1); // Avoid div by zero
+
+  return (
+    <div className="w-full h-48 flex items-end justify-between gap-2 md:gap-4 mb-6 px-2">
+      {chartData.map((d, i) => {
+        const heightPct = (d.total / maxVal) * 100;
+        const isToday = d.date === new Date().toISOString().split('T')[0];
+        
+        return (
+          <div key={d.date} className="flex-1 flex flex-col items-center gap-2 group">
+            {/* Numeric Label */}
+            <div className={`text-[10px] font-bold transition-all ${isToday ? 'text-blue-600 dark:text-blue-400 scale-110' : 'text-slate-400 dark:text-slate-500'} ${d.total === 0 ? 'opacity-0' : 'opacity-100'}`}>
+                {d.total}
+            </div>
+            
+            {/* Bar */}
+            <div className="relative w-full flex items-end h-24 bg-slate-100 dark:bg-slate-800 rounded-md overflow-hidden">
+                <div 
+                    style={{ height: `${heightPct}%` }} 
+                    className={`w-full transition-all duration-1000 ease-out rounded-t-md ${isToday ? 'bg-blue-500 dark:bg-blue-600' : 'bg-slate-300 dark:bg-slate-600 group-hover:bg-slate-400 dark:group-hover:bg-slate-500'}`}
+                ></div>
+            </div>
+            
+            {/* Day Label */}
+            <span className={`text-[9px] font-black uppercase tracking-wider ${isToday ? 'text-blue-500 dark:text-blue-400' : 'text-slate-300 dark:text-slate-600'}`}>
+                {d.dayName}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // --- AUTH COMPONENT ---
 const AuthScreen: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -117,6 +187,14 @@ const App: React.FC = () => {
   const [showManage, setShowManage] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
   
+  // Time Tracking State
+  const [dailyTime, setDailyTime] = useState<number>(0); // Total seconds today (DB + local)
+  const [unsyncedTime, setUnsyncedTime] = useState<number>(0); // Local delta seconds
+  const [isActiveUser, setIsActiveUser] = useState<boolean>(false);
+  const lastActivityTime = useRef<number>(Date.now());
+  const ACTIVITY_THRESHOLD_MS = 2000; // 2 seconds of inactivity stops the timer
+  const SYNC_INTERVAL_MS = 10000; // Sync every 10 seconds
+
   // Theme State
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
@@ -138,6 +216,7 @@ const App: React.FC = () => {
   const [allCategories, setAllCategories] = useState<Category[]>([]);
   const [allSentences, setAllSentences] = useState<Sentence[]>([]);
   const [dailyStats, setDailyStats] = useState<DailyStat[]>([]);
+  const [historicalStats, setHistoricalStats] = useState<DailyStat[]>([]);
 
   // Form State
   const [newCategory, setNewCategory] = useState('');
@@ -174,11 +253,94 @@ const App: React.FC = () => {
     const sents = await supabaseService.syncData();
     const cats = supabaseService.getCategories();
     const stats = await supabaseService.getDailyStats();
+    const history = await supabaseService.getHistoricalStats(7);
+    const time = await supabaseService.getDailyTime();
     
     setAllSentences(sents);
     setAllCategories(cats);
-    setDailyStats(stats);
+    setDailyStats(stats.filter(s => s.sentence_id !== 'GLOBAL_TIME_TRACKER'));
+    setHistoricalStats(history);
+    setDailyTime(time);
   }, [currentUser]);
+
+  // --- ACTIVITY TRACKER & TIMER ---
+  
+  // 1. Activity Listener
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const recordActivity = () => {
+        lastActivityTime.current = Date.now();
+        if (!isActiveUser) setIsActiveUser(true);
+    };
+
+    const debouncedRecord = () => {
+        // Simple throttle to avoid spamming variables on every pixel scroll
+        if (Date.now() - lastActivityTime.current > 100) {
+            recordActivity();
+        }
+    };
+
+    window.addEventListener('mousemove', debouncedRecord);
+    window.addEventListener('mousedown', recordActivity);
+    window.addEventListener('touchstart', recordActivity);
+    window.addEventListener('keydown', recordActivity);
+    window.addEventListener('scroll', debouncedRecord);
+    window.addEventListener('click', recordActivity);
+
+    return () => {
+        window.removeEventListener('mousemove', debouncedRecord);
+        window.removeEventListener('mousedown', recordActivity);
+        window.removeEventListener('touchstart', recordActivity);
+        window.removeEventListener('keydown', recordActivity);
+        window.removeEventListener('scroll', debouncedRecord);
+        window.removeEventListener('click', recordActivity);
+    };
+  }, [currentUser, isActiveUser]);
+
+  // 2. Timer Loop (1s)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const interval = setInterval(() => {
+        const now = Date.now();
+        // If last activity was within threshold, user is active
+        if (now - lastActivityTime.current < ACTIVITY_THRESHOLD_MS) {
+            setIsActiveUser(true);
+            setDailyTime(prev => prev + 1);
+            setUnsyncedTime(prev => prev + 1);
+        } else {
+            setIsActiveUser(false);
+        }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [currentUser]);
+
+  // 3. Sync Loop (10s)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const interval = setInterval(async () => {
+        if (unsyncedTime > 0) {
+            // Capture value to send
+            const timeToSend = unsyncedTime;
+            // Optimistically reset local delta
+            setUnsyncedTime(0);
+            
+            // Send to DB
+            const newTotal = await supabaseService.incrementDailyTime(timeToSend);
+            
+            // Reconcile if DB returned a valid total, otherwise we trust our local tick
+            if (newTotal > 0) {
+                 setDailyTime(newTotal);
+            }
+        }
+    }, SYNC_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [currentUser, unsyncedTime]);
+
 
   // Logic to get next sentence using shuffle bag (queue)
   const getNextSentence = useCallback((focusId: string | number | 'all') => {
@@ -202,16 +364,14 @@ const App: React.FC = () => {
     // Pop the next sentence
     let next = sentenceQueue.current.pop();
 
-    // Ensure the popped sentence is still valid (in case it was deleted or changed category while in queue)
+    // Ensure the popped sentence is still valid
     while (next && !relevant.find(r => r.id === next?.id)) {
         if (sentenceQueue.current.length === 0) {
-            // Queue exhausted with invalid items, recursion to refill
             return getNextSentence(focusId);
         }
         next = sentenceQueue.current.pop();
     }
     
-    // Safety fallback
     if (!next) return getNextSentence(focusId);
 
     return next;
@@ -266,7 +426,14 @@ const App: React.FC = () => {
           setAllCategories(cats);
         },
         (stats) => {
+          // Filtered inside the service now, but double check
           setDailyStats(stats);
+          supabaseService.getHistoricalStats(7).then(setHistoricalStats);
+        },
+        (totalTime) => {
+            // Update local time if DB pushes a change (e.g. from another device)
+            // Only update if the difference is significant to avoid jitter from local unsynced time
+            setDailyTime(prev => Math.max(prev, totalTime));
         }
       );
     } catch (e) {
@@ -288,7 +455,7 @@ const App: React.FC = () => {
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
     setSessionFocusId(id);
-    sentenceQueue.current = []; // Clear queue to ensure we pick from the new category immediately
+    sentenceQueue.current = []; 
     resetCycle(counterMode, id);
   };
 
@@ -307,7 +474,6 @@ const App: React.FC = () => {
         if (counterMode === 'down') {
           if (prev <= 1) {
             const newLimit = generateRandomLimit();
-            // Trigger next sentence logic directly here
             const nextSentence = getNextSentence(sessionFocusId);
             setRandomLimit(newLimit);
             setCurrentSentence(nextSentence);
@@ -315,7 +481,6 @@ const App: React.FC = () => {
           }
           return prev - 1;
         } else {
-          // Ascend Mode: No limit, just keep counting up indefinitely
           return prev + 1;
         }
       });
@@ -426,7 +591,6 @@ const App: React.FC = () => {
   const handleUpdateSentence = async (id: string | number) => {
     setIsSyncing(true);
     
-    // Update daily count concurrently
     const countPromise = supabaseService.updateDailyCount(id, editForm.count);
     const contentPromise = supabaseService.updateSentence(id, editForm.text, editForm.categoryIds);
 
@@ -448,13 +612,10 @@ const App: React.FC = () => {
     if (!success) {
       alert(`Delete Error: ${error}`);
     } else {
-      // Optimistically update local list to reflect deletion immediately
       setAllSentences(prev => prev.filter(s => s.id !== id));
       refreshData();
-      // If the currently displayed sentence was deleted, pick a new one
       if (currentSentence?.id === id) {
         const remaining = allSentences.filter(s => s.id !== id);
-        // Basic random pick from local state or reset cycle
         if (remaining.length > 0) {
             const next = remaining[Math.floor(Math.random() * remaining.length)];
             setCurrentSentence(next);
@@ -477,7 +638,6 @@ const App: React.FC = () => {
     }
   };
 
-  // --- STATS EDIT HANDLERS ---
   const handleStartStatEdit = (id: string | number, count: number) => {
     setEditingStatId(id);
     setStatEditValue(count);
@@ -565,9 +725,17 @@ const App: React.FC = () => {
               <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400 dark:text-slate-500">Daily Logs</h2>
               <button onClick={() => setShowStats(false)} className="px-6 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-200 dark:shadow-none">Close</button>
             </div>
-            <div className="flex-1 overflow-y-auto p-8 space-y-4">
+            
+            {/* HISTORICAL CHART */}
+            <div className="px-8 mt-4">
+                 <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-600 mb-2">Last 7 Days</h3>
+                 <StatsChart stats={historicalStats} />
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-8 pb-8 space-y-4">
+               <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-600 mb-4 sticky top-0 bg-white dark:bg-slate-900 py-2">Today's Breakdown</h3>
                {statsList.length === 0 ? (
-                 <div className="text-center py-10 text-slate-400 dark:text-slate-600 text-xs tracking-widest uppercase">No reflections yet today</div>
+                 <div className="text-center py-4 text-slate-400 dark:text-slate-600 text-xs tracking-widest uppercase">No reflections yet today</div>
                ) : (
                  statsList.map((stat, idx) => (
                    <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
@@ -818,8 +986,18 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          <div className={`text-slate-300 dark:text-slate-600 text-[10px] font-black tracking-[0.4em] uppercase transition-all ${isSyncing ? 'opacity-100 text-blue-400 dark:text-blue-500 animate-pulse' : 'opacity-40'}`}>
-            {isSyncing ? 'Sync' : 'Live'}
+          <div className="flex items-center gap-4">
+             {/* Time Display */}
+             <div className={`transition-all duration-500 flex items-center gap-2 ${isActiveUser ? 'opacity-100 scale-105' : 'opacity-40 scale-100'}`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${isActiveUser ? 'bg-green-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600'}`}></div>
+                <div className="text-slate-300 dark:text-slate-600 text-[10px] font-black tracking-[0.2em] uppercase tabular-nums">
+                    {formatTime(dailyTime)}
+                </div>
+             </div>
+
+             <div className={`text-slate-300 dark:text-slate-600 text-[10px] font-black tracking-[0.4em] uppercase transition-all ${isSyncing ? 'opacity-100 text-blue-400 dark:text-blue-500 animate-pulse' : 'opacity-40'}`}>
+                {isSyncing ? 'Sync' : 'Live'}
+             </div>
           </div>
         </div>
         

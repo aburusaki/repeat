@@ -2,6 +2,8 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { Category, Sentence, DailyStat } from '../types';
 
+const TIME_TRACKER_ID = 'GLOBAL_TIME_TRACKER';
+
 const getSupabaseConfig = () => {
   const manualUrl = localStorage.getItem('SB_OVERRIDE_URL');
   const manualKey = localStorage.getItem('SB_OVERRIDE_KEY');
@@ -146,7 +148,8 @@ export const supabaseService = {
 
   subscribeToChanges(
     onContentChange: (sentences: Sentence[], categories: Category[]) => void,
-    onStatsChange: (stats: DailyStat[]) => void
+    onStatsChange: (stats: DailyStat[]) => void,
+    onTimeChange?: (totalSeconds: number) => void
   ): () => void {
     if (!this.isConfigured()) return () => {};
     
@@ -161,7 +164,15 @@ export const supabaseService = {
 
     const handleStatsEvent = async () => {
       const stats = await this.getDailyStats();
-      onStatsChange(stats);
+      // Filter out the time tracker row from standard stats display
+      const cleanStats = stats.filter(s => s.sentence_id !== TIME_TRACKER_ID);
+      onStatsChange(cleanStats);
+
+      // Handle time update specifically
+      const timeStat = stats.find(s => s.sentence_id === TIME_TRACKER_ID);
+      if (onTimeChange && timeStat) {
+        onTimeChange(timeStat.count);
+      }
     };
 
     const startPolling = () => {
@@ -360,6 +371,30 @@ export const supabaseService = {
     }
   },
 
+  async getHistoricalStats(days: number = 7): Promise<DailyStat[]> {
+    if (!this.isConfigured()) return [];
+    try {
+      const user = await this.getCurrentUser();
+      if (!user) return [];
+
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startStr = startDate.toISOString().split('T')[0];
+
+      const { data, error } = await this.getClient()
+        .from('daily_stats')
+        .select('*')
+        .gte('date', startStr)
+        .eq('user_id', user.id);
+      
+      if (error) throw error;
+      return data || [];
+    } catch (e) {
+      console.error('Get Historical Stats Error:', e);
+      return [];
+    }
+  },
+
   async incrementStat(sentenceId: string | number): Promise<void> {
     if (!this.isConfigured()) return;
     try {
@@ -391,6 +426,65 @@ export const supabaseService = {
       if (error) throw error;
     } catch (e) {
       console.error('Increment Stat Error:', e);
+    }
+  },
+
+  // --- TIME TRACKING METHODS ---
+  
+  async getDailyTime(): Promise<number> {
+    if (!this.isConfigured()) return 0;
+    try {
+      const user = await this.getCurrentUser();
+      if (!user) return 0;
+      const today = new Date().toISOString().split('T')[0];
+      
+      const { data, error } = await this.getClient()
+        .from('daily_stats')
+        .select('count')
+        .eq('date', today)
+        .eq('sentence_id', TIME_TRACKER_ID)
+        .eq('user_id', user.id)
+        .single();
+        
+      if (error || !data) return 0;
+      return data.count;
+    } catch { return 0; }
+  },
+
+  async incrementDailyTime(secondsToAdd: number): Promise<number> {
+    if (!this.isConfigured() || secondsToAdd <= 0) return 0;
+    try {
+      const user = await this.getCurrentUser();
+      if (!user) return 0;
+
+      const client = this.getClient();
+      const today = new Date().toISOString().split('T')[0];
+
+      // Atomic update approach: get current, add, set.
+      const { data: existing } = await client
+        .from('daily_stats')
+        .select('count')
+        .eq('date', today)
+        .eq('sentence_id', TIME_TRACKER_ID)
+        .eq('user_id', user.id)
+        .single();
+        
+      const newTotal = (existing?.count || 0) + secondsToAdd;
+
+      const { error } = await client
+        .from('daily_stats')
+        .upsert({ 
+            date: today, 
+            sentence_id: TIME_TRACKER_ID, 
+            count: newTotal,
+            user_id: user.id 
+        }, { onConflict: 'date, sentence_id' }); 
+      
+      if (error) throw error;
+      return newTotal;
+    } catch (e) {
+      console.error("Time Sync Error", e);
+      return 0;
     }
   },
 
