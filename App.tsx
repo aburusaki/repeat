@@ -130,6 +130,9 @@ const App: React.FC = () => {
   // Interaction throttling refs
   const lastScrollTime = useRef<number>(0);
   const touchStartY = useRef<number>(0);
+  
+  // Sentence Selection Queue (Shuffle Bag)
+  const sentenceQueue = useRef<Sentence[]>([]);
 
   // Data State
   const [allCategories, setAllCategories] = useState<Category[]>([]);
@@ -173,14 +176,51 @@ const App: React.FC = () => {
     setDailyStats(stats);
   }, [currentUser]);
 
+  // Logic to get next sentence using shuffle bag (queue)
+  const getNextSentence = useCallback((focusId: string | number | 'all') => {
+    const relevant = allSentences.filter(s => 
+      focusId === 'all' || (s.categoryIds || []).includes(focusId)
+    );
+
+    if (relevant.length === 0) return null;
+
+    // If queue is empty or has invalid items, refill it
+    if (sentenceQueue.current.length === 0) {
+      const newQueue = [...relevant];
+      // Fisher-Yates shuffle
+      for (let i = newQueue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newQueue[i], newQueue[j]] = [newQueue[j], newQueue[i]];
+      }
+      sentenceQueue.current = newQueue;
+    }
+
+    // Pop the next sentence
+    let next = sentenceQueue.current.pop();
+
+    // Ensure the popped sentence is still valid (in case it was deleted or changed category while in queue)
+    while (next && !relevant.find(r => r.id === next?.id)) {
+        if (sentenceQueue.current.length === 0) {
+            // Queue exhausted with invalid items, recursion to refill
+            return getNextSentence(focusId);
+        }
+        next = sentenceQueue.current.pop();
+    }
+    
+    // Safety fallback
+    if (!next) return getNextSentence(focusId);
+
+    return next;
+  }, [allSentences]);
+
   const resetCycle = useCallback((mode: 'up' | 'down', focusId: string | number | 'all') => {
     const newLimit = generateRandomLimit();
-    const newSentenceObj = supabaseService.getRandomSentence(focusId);
+    const newSentenceObj = getNextSentence(focusId);
     
     setRandomLimit(newLimit);
     setCurrentSentence(newSentenceObj);
     setCurrentNumber(mode === 'down' ? newLimit : 1);
-  }, []);
+  }, [getNextSentence]);
 
   // Theme Effect
   useEffect(() => {
@@ -206,7 +246,6 @@ const App: React.FC = () => {
       setIsSyncing(true);
       try {
         await refreshData();
-        resetCycle('down', 'all'); 
       } catch (e) {
         console.error("Initialization failed:", e);
       } finally {
@@ -233,11 +272,19 @@ const App: React.FC = () => {
     return () => {
       unsubscribe();
     };
-  }, [currentUser, refreshData, resetCycle]); 
+  }, [currentUser, refreshData]); 
+
+  // Auto-start cycle when data is available
+  useEffect(() => {
+    if (currentSentence === null && allSentences.length > 0) {
+        resetCycle(counterMode, sessionFocusId);
+    }
+  }, [allSentences, currentSentence, resetCycle, counterMode, sessionFocusId]);
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
     setSessionFocusId(id);
+    sentenceQueue.current = []; // Clear queue to ensure we pick from the new category immediately
     resetCycle(counterMode, id);
   };
 
@@ -256,8 +303,10 @@ const App: React.FC = () => {
         if (counterMode === 'down') {
           if (prev <= 1) {
             const newLimit = generateRandomLimit();
+            // Trigger next sentence logic directly here
+            const nextSentence = getNextSentence(sessionFocusId);
             setRandomLimit(newLimit);
-            setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
+            setCurrentSentence(nextSentence);
             return newLimit;
           }
           return prev - 1;
@@ -268,7 +317,7 @@ const App: React.FC = () => {
       });
       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, randomLimit]);
+  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence]);
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
