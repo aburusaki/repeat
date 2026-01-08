@@ -50,7 +50,15 @@ export const supabaseService = {
     if (!supabaseClient || (supabaseClient as any).supabaseUrl !== config.url) {
       supabaseClient = createClient(
         config.url || 'https://placeholder-project.supabase.co', 
-        config.key || 'placeholder-key'
+        config.key || 'placeholder-key',
+        {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+            storage: localStorage
+          }
+        }
       );
     }
     return supabaseClient;
