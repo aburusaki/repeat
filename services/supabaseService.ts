@@ -229,12 +229,23 @@ export const supabaseService = {
       const client = this.getClient();
       
       // 1. Update text
-      const { error: sError } = await client.from('sentences').update({ text }).eq('id', id).eq('user_id', user.id);
-      if (sError) throw sError;
+      const { error: sError } = await client
+        .from('sentences')
+        .update({ text })
+        .eq('id', id)
+        .eq('user_id', user.id);
+        
+      if (sError) throw new Error(`Failed to update text: ${sError.message}`);
       
-      // 2. Clear existing categories for this sentence
-      // We manually delete from junction table.
-      await client.from('sentence_categories').delete().eq('sentence_id', id);
+      // 2. Clear existing categories for this sentence. 
+      // We explicitly check for error to ensure RLS permitted the delete.
+      const { error: delError } = await client
+        .from('sentence_categories')
+        .delete()
+        .eq('sentence_id', id)
+        .eq('user_id', user.id); // Add user_id filter for stricter RLS compliance
+        
+      if (delError) throw new Error(`Failed to clear categories: ${delError.message}`);
 
       // 3. Insert new categories
       if (categoryIds.length > 0) {
@@ -244,7 +255,7 @@ export const supabaseService = {
             user_id: user.id 
         }));
         const { error: insError } = await client.from('sentence_categories').insert(links);
-        if (insError) throw insError;
+        if (insError) throw new Error(`Failed to insert categories: ${insError.message}`);
       }
       
       await this.syncData();
@@ -260,17 +271,33 @@ export const supabaseService = {
 
       const client = this.getClient();
 
-      // Explicitly delete dependencies to avoid Foreign Key constraint violations
       // 1. Delete associated category links
-      await client.from('sentence_categories').delete().eq('sentence_id', id);
+      // Important: We must check for errors here. If this fails (e.g. RLS), the next steps might violate FK constraints.
+      const { error: linkError } = await client
+        .from('sentence_categories')
+        .delete()
+        .eq('sentence_id', id)
+        .eq('user_id', user.id);
+
+      if (linkError) throw new Error(`Failed to delete categories: ${linkError.message}`);
       
       // 2. Delete associated daily stats
-      await client.from('daily_stats').delete().eq('sentence_id', id);
+      const { error: statError } = await client
+        .from('daily_stats')
+        .delete()
+        .eq('sentence_id', id)
+        .eq('user_id', user.id);
+
+      if (statError) throw new Error(`Failed to delete stats: ${statError.message}`);
 
       // 3. Delete the sentence
-      const { error } = await client.from('sentences').delete().eq('id', id).eq('user_id', user.id);
+      const { error: sentError } = await client
+        .from('sentences')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
       
-      if (error) throw error;
+      if (sentError) throw new Error(`Failed to delete sentence: ${sentError.message}`);
       
       await this.syncData();
       return { success: true, error: null };
