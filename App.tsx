@@ -378,7 +378,23 @@ const App: React.FC = () => {
     if (!confirm("Delete this entry permanently?")) return;
     setIsSyncing(true);
     const { success, error } = await supabaseService.deleteSentence(id);
-    if (!success) alert(`Delete Error: ${error}`);
+    if (!success) {
+      alert(`Delete Error: ${error}`);
+    } else {
+      // Optimistically update local list to reflect deletion immediately
+      setAllSentences(prev => prev.filter(s => s.id !== id));
+      // If the currently displayed sentence was deleted, pick a new one
+      if (currentSentence?.id === id) {
+        const remaining = allSentences.filter(s => s.id !== id);
+        // Basic random pick from local state or reset cycle
+        if (remaining.length > 0) {
+            const next = remaining[Math.floor(Math.random() * remaining.length)];
+            setCurrentSentence(next);
+        } else {
+            setCurrentSentence(null);
+        }
+      }
+    }
     setIsSyncing(false);
   };
 

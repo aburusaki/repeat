@@ -108,7 +108,6 @@ export const supabaseService = {
       if (!user) return [];
 
       const client = this.getClient();
-      // We filter by user_id. Even with RLS enabled, explicit filtering is good practice.
       const [catsRes, sentsRes] = await Promise.all([
         client.from('categories').select('*').eq('user_id', user.id).order('name'),
         client.from('sentences').select('id, text, sentence_categories(category_id)').eq('user_id', user.id).order('created_at', { ascending: false })
@@ -207,8 +206,6 @@ export const supabaseService = {
       if (sError) throw sError;
       
       if (sentence?.[0] && categoryIds.length > 0) {
-        // We also attach user_id to the junction table if your schema supports it, 
-        // otherwise RLS on the parent tables usually suffices, but explicitly is better.
         const links = categoryIds.map(catId => ({ 
             sentence_id: sentence[0].id, 
             category_id: catId,
@@ -231,12 +228,15 @@ export const supabaseService = {
 
       const client = this.getClient();
       
+      // 1. Update text
       const { error: sError } = await client.from('sentences').update({ text }).eq('id', id).eq('user_id', user.id);
       if (sError) throw sError;
       
-      const { error: delError } = await client.from('sentence_categories').delete().eq('sentence_id', id); // RLS handles permission
-      if (delError) throw delError;
+      // 2. Clear existing categories for this sentence
+      // We manually delete from junction table.
+      await client.from('sentence_categories').delete().eq('sentence_id', id);
 
+      // 3. Insert new categories
       if (categoryIds.length > 0) {
         const links = categoryIds.map(catId => ({ 
             sentence_id: id, 
@@ -258,11 +258,26 @@ export const supabaseService = {
       const user = await this.getCurrentUser();
       if (!user) throw new Error("Not logged in");
 
-      const { error } = await this.getClient().from('sentences').delete().eq('id', id).eq('user_id', user.id);
+      const client = this.getClient();
+
+      // Explicitly delete dependencies to avoid Foreign Key constraint violations
+      // 1. Delete associated category links
+      await client.from('sentence_categories').delete().eq('sentence_id', id);
+      
+      // 2. Delete associated daily stats
+      await client.from('daily_stats').delete().eq('sentence_id', id);
+
+      // 3. Delete the sentence
+      const { error } = await client.from('sentences').delete().eq('id', id).eq('user_id', user.id);
+      
       if (error) throw error;
+      
       await this.syncData();
       return { success: true, error: null };
-    } catch (e: any) { return { success: false, error: e.message }; }
+    } catch (e: any) { 
+        console.error("Delete sentence error:", e);
+        return { success: false, error: e.message }; 
+    }
   },
 
   getCategories(): Category[] {
@@ -334,7 +349,7 @@ export const supabaseService = {
             sentence_id: sentenceId, 
             count: newCount,
             user_id: user.id 
-        }, { onConflict: 'date, sentence_id' }); // Note: unique constraint might need to include user_id in DB
+        }, { onConflict: 'date, sentence_id' }); 
         
       if (error) throw error;
     } catch (e) {
