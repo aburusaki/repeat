@@ -228,22 +228,23 @@ export const supabaseService = {
 
       const client = this.getClient();
       
-      // 1. Update text
-      const { error: sError } = await client
+      // 1. Update text - Use .select() to verify the update actually happened
+      const { data: updated, error: sError } = await client
         .from('sentences')
         .update({ text })
         .eq('id', id)
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .select();
         
       if (sError) throw new Error(`Failed to update text: ${sError.message}`);
-      
+      if (!updated || updated.length === 0) throw new Error("Update failed: Sentence not found or permission denied.");
+
       // 2. Clear existing categories for this sentence. 
-      // We explicitly check for error to ensure RLS permitted the delete.
       const { error: delError } = await client
         .from('sentence_categories')
         .delete()
         .eq('sentence_id', id)
-        .eq('user_id', user.id); // Add user_id filter for stricter RLS compliance
+        .eq('user_id', user.id); 
         
       if (delError) throw new Error(`Failed to clear categories: ${delError.message}`);
 
@@ -272,7 +273,6 @@ export const supabaseService = {
       const client = this.getClient();
 
       // 1. Delete associated category links
-      // Important: We must check for errors here. If this fails (e.g. RLS), the next steps might violate FK constraints.
       const { error: linkError } = await client
         .from('sentence_categories')
         .delete()
@@ -290,14 +290,16 @@ export const supabaseService = {
 
       if (statError) throw new Error(`Failed to delete stats: ${statError.message}`);
 
-      // 3. Delete the sentence
-      const { error: sentError } = await client
+      // 3. Delete the sentence - Use .select() to verify deletion
+      const { data: deleted, error: sentError } = await client
         .from('sentences')
         .delete()
         .eq('id', id)
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .select();
       
       if (sentError) throw new Error(`Failed to delete sentence: ${sentError.message}`);
+      if (!deleted || deleted.length === 0) throw new Error("Delete failed: Sentence not found or permission denied.");
       
       await this.syncData();
       return { success: true, error: null };
