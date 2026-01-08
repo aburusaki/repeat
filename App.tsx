@@ -262,12 +262,7 @@ const App: React.FC = () => {
           }
           return prev - 1;
         } else {
-          if (prev >= randomLimit) {
-            const newLimit = generateRandomLimit();
-            setRandomLimit(newLimit);
-            setCurrentSentence(supabaseService.getRandomSentence(sessionFocusId));
-            return 1;
-          }
+          // Ascend Mode: No limit, just keep counting up indefinitely
           return prev + 1;
         }
       });
@@ -328,7 +323,12 @@ const App: React.FC = () => {
     e.stopPropagation();
     const newMode = counterMode === 'down' ? 'up' : 'down';
     setCounterMode(newMode);
-    setCurrentNumber(newMode === 'down' ? randomLimit : 1);
+    
+    if (newMode === 'down') {
+      resetCycle('down', sessionFocusId);
+    } else {
+      setCurrentNumber(1);
+    }
   };
 
   const handleAddCategory = async (e: React.FormEvent) => {
@@ -698,16 +698,20 @@ const App: React.FC = () => {
         </div>
         
         <div className="flex gap-2 items-center">
-           {[...Array(randomLimit)].map((_, i) => (
-             <div 
-                key={i} 
-                className={`h-[2px] rounded-full transition-all duration-700 ease-out 
-                  ${counterMode === 'down' 
-                    ? (i < currentNumber ? 'bg-slate-400 dark:bg-slate-500 w-5' : 'bg-slate-200 dark:bg-slate-800 w-1.5') 
-                    : (i >= currentNumber ? 'bg-slate-200 dark:bg-slate-800 w-1.5' : 'bg-slate-400 dark:bg-slate-500 w-5')
-                  }`} 
-             />
-           ))}
+           {counterMode === 'down' ? (
+             [...Array(randomLimit)].map((_, i) => (
+               <div 
+                  key={i} 
+                  className={`h-[2px] rounded-full transition-all duration-700 ease-out 
+                    ${i < currentNumber ? 'bg-slate-400 dark:bg-slate-500 w-5' : 'bg-slate-200 dark:bg-slate-800 w-1.5'}
+                  `} 
+               />
+             ))
+           ) : (
+             <div className="flex items-center gap-1 opacity-50">
+                <div className="h-[2px] w-12 bg-gradient-to-r from-transparent via-slate-400 dark:via-slate-500 to-transparent rounded-full animate-pulse"></div>
+             </div>
+           )}
         </div>
       </div>
     </div>
