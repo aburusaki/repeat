@@ -144,9 +144,13 @@ const App: React.FC = () => {
   const [newSentenceText, setNewSentenceText] = useState('');
   const [selectedCats, setSelectedCats] = useState<(string | number)[]>([]);
   const [editingId, setEditingId] = useState<string | number | null>(null);
-  const [editForm, setEditForm] = useState<{ text: string; categoryIds: (string | number)[] }>({ text: '', categoryIds: [] });
+  const [editForm, setEditForm] = useState<{ text: string; categoryIds: (string | number)[]; count: number }>({ text: '', categoryIds: [], count: 0 });
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategoryId, setFilterCategoryId] = useState<string | number | 'all'>('all');
+
+  // Stats Editing State
+  const [editingStatId, setEditingStatId] = useState<string | number | null>(null);
+  const [statEditValue, setStatEditValue] = useState<number>(0);
 
   // Derived State
   const todayClickCount = useMemo(() => {
@@ -389,6 +393,7 @@ const App: React.FC = () => {
     if (error) alert(`Category Error: ${error}`);
     else {
       setNewCategory('');
+      refreshData();
     }
     setIsSyncing(false);
   };
@@ -403,22 +408,35 @@ const App: React.FC = () => {
     else {
       setNewSentenceText('');
       setSelectedCats([]);
+      refreshData();
     }
     setIsSyncing(false);
   };
 
   const handleStartEdit = (s: Sentence) => {
     setEditingId(s.id);
-    setEditForm({ text: s.text, categoryIds: s.categoryIds || [] });
+    const dailyStat = dailyStats.find(ds => String(ds.sentence_id) === String(s.id));
+    setEditForm({ 
+        text: s.text, 
+        categoryIds: s.categoryIds || [],
+        count: dailyStat ? dailyStat.count : 0
+    });
   };
 
   const handleUpdateSentence = async (id: string | number) => {
     setIsSyncing(true);
-    const { success, error } = await supabaseService.updateSentence(id, editForm.text, editForm.categoryIds);
-    if (success) {
+    
+    // Update daily count concurrently
+    const countPromise = supabaseService.updateDailyCount(id, editForm.count);
+    const contentPromise = supabaseService.updateSentence(id, editForm.text, editForm.categoryIds);
+
+    const [countResult, contentResult] = await Promise.all([countPromise, contentPromise]);
+
+    if (contentResult.success && countResult.success) {
       setEditingId(null);
+      refreshData();
     } else {
-      alert(`Update Error: ${error}`);
+      alert(`Update Error: ${contentResult.error || countResult.error}`);
     }
     setIsSyncing(false);
   };
@@ -432,6 +450,7 @@ const App: React.FC = () => {
     } else {
       // Optimistically update local list to reflect deletion immediately
       setAllSentences(prev => prev.filter(s => s.id !== id));
+      refreshData();
       // If the currently displayed sentence was deleted, pick a new one
       if (currentSentence?.id === id) {
         const remaining = allSentences.filter(s => s.id !== id);
@@ -449,8 +468,31 @@ const App: React.FC = () => {
 
   const handleResetAllCounters = async () => {
     if (confirm("Are you sure you want to reset all counters to 0?")) {
-      await supabaseService.resetAllStats();
+      const { success, error } = await supabaseService.resetAllStats();
+      if (!success) {
+        alert(`Reset Error: ${error}`);
+      } else {
+        refreshData();
+      }
     }
+  };
+
+  // --- STATS EDIT HANDLERS ---
+  const handleStartStatEdit = (id: string | number, count: number) => {
+    setEditingStatId(id);
+    setStatEditValue(count);
+  };
+
+  const handleSaveStatEdit = async (id: string | number) => {
+    setIsSyncing(true);
+    const { success, error } = await supabaseService.updateDailyCount(id, statEditValue);
+    if(success) {
+        setEditingStatId(null);
+        refreshData();
+    } else {
+        alert(error);
+    }
+    setIsSyncing(false);
   };
 
   const handleLogout = async () => {
@@ -474,6 +516,7 @@ const App: React.FC = () => {
       .map(stat => {
         const s = allSentences.find(sent => String(sent.id) === String(stat.sentence_id));
         return {
+          sentenceId: stat.sentence_id,
           sentence: s ? s.text : 'Unknown',
           count: stat.count
         };
@@ -529,7 +572,31 @@ const App: React.FC = () => {
                  statsList.map((stat, idx) => (
                    <div key={idx} className="flex justify-between items-center p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
                       <span className="text-sm font-serif italic text-slate-700 dark:text-slate-300 pr-4 line-clamp-2">"{stat.sentence}"</span>
-                      <span className="px-3 py-1 bg-white dark:bg-slate-900 rounded-full text-[10px] font-black text-blue-600 dark:text-blue-400 shadow-sm border border-slate-100 dark:border-slate-700">{stat.count}</span>
+                      {editingStatId === stat.sentenceId ? (
+                        <div className="flex items-center gap-2">
+                           <input 
+                             type="number"
+                             min="0"
+                             autoFocus
+                             className="w-16 px-2 py-1 bg-white dark:bg-slate-950 border border-blue-500 rounded-lg text-sm font-bold text-center focus:outline-none"
+                             value={statEditValue}
+                             onChange={(e) => setStatEditValue(parseInt(e.target.value) || 0)}
+                           />
+                           <button onClick={() => handleSaveStatEdit(stat.sentenceId)} className="p-1.5 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors">
+                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                           </button>
+                           <button onClick={() => setEditingStatId(null)} className="p-1.5 bg-slate-200 dark:bg-slate-700 text-slate-500 rounded-full hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors">
+                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                           </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                           <span className="px-3 py-1 bg-white dark:bg-slate-900 rounded-full text-[10px] font-black text-blue-600 dark:text-blue-400 shadow-sm border border-slate-100 dark:border-slate-700 min-w-[2rem] text-center">{stat.count}</span>
+                           <button onClick={() => handleStartStatEdit(stat.sentenceId, stat.count)} className="p-2 text-slate-300 dark:text-slate-600 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121(0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                           </button>
+                        </div>
+                      )}
                    </div>
                  ))
                )}
@@ -645,6 +712,16 @@ const App: React.FC = () => {
                               className="w-full p-6 bg-white dark:bg-slate-950 border border-blue-100 dark:border-blue-900 rounded-2xl text-sm font-serif italic focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 text-slate-800 dark:text-slate-200"
                               rows={3}
                             />
+                             <div className="flex flex-col gap-2">
+                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Today's Count</label>
+                                <input 
+                                    type="number"
+                                    min="0"
+                                    value={editForm.count}
+                                    onChange={e => setEditForm(prev => ({ ...prev, count: parseInt(e.target.value) || 0 }))}
+                                    className="w-full md:w-32 px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 dark:text-slate-200 text-sm font-bold"
+                                />
+                            </div>
                             <div className="flex flex-wrap gap-2">
                               {allCategories.map(cat => (
                                 <button 

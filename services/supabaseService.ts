@@ -386,15 +386,49 @@ export const supabaseService = {
     }
   },
 
-  async resetAllStats(): Promise<void> {
-    if (!this.isConfigured()) return;
+  async updateDailyCount(sentenceId: string | number, count: number): Promise<{ success: boolean; error: string | null }> {
+    if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
+    try {
+      const user = await this.getCurrentUser();
+      if (!user) throw new Error("Not logged in");
+
+      const client = this.getClient();
+      const today = new Date().toISOString().split('T')[0];
+
+      const { error } = await client
+        .from('daily_stats')
+        .upsert({ 
+            date: today, 
+            sentence_id: sentenceId, 
+            count: count,
+            user_id: user.id 
+        }, { onConflict: 'date, sentence_id' }); 
+        
+      if (error) throw error;
+      return { success: true, error: null };
+    } catch (e: any) {
+      console.error('Update Count Error:', e);
+      return { success: false, error: e.message };
+    }
+  },
+
+  async resetAllStats(): Promise<{ success: boolean; error: string | null }> {
+    if (!this.isConfigured()) return { success: false, error: "Cloud not configured." };
     try {
        const user = await this.getCurrentUser();
-       if (!user) return;
-       const { error } = await this.getClient().from('daily_stats').delete().neq('count', -1).eq('user_id', user.id);
+       if (!user) throw new Error("Not logged in");
+       
+       const { error } = await this.getClient()
+        .from('daily_stats')
+        .delete()
+        .gte('count', 0)
+        .eq('user_id', user.id);
+        
        if (error) throw error;
-    } catch (e) {
+       return { success: true, error: null };
+    } catch (e: any) {
       console.error('Reset Stats Error:', e);
+      return { success: false, error: e.message };
     }
   }
 };
