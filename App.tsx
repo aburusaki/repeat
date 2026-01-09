@@ -258,7 +258,7 @@ const App: React.FC = () => {
     
     setAllSentences(sents);
     setAllCategories(cats);
-    setDailyStats(stats.filter(s => s.sentence_id !== 'GLOBAL_TIME_TRACKER'));
+    setDailyStats(stats); // Service now automatically filters out the time tracker stats
     setHistoricalStats(history);
     setDailyTime(time);
   }, [currentUser]);
