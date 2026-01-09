@@ -460,6 +460,14 @@ const App: React.FC = () => {
 
   const handleInteraction = useCallback(() => {
     if (isAnimating || showStats || showManage) return;
+
+    // FIX FOR IOS HAPTICS:
+    // Browsers (especially Safari) require haptics/audio to be triggered directly by a user action.
+    // Waiting for the 250ms animation timeout causes the browser to "lose" the user gesture context.
+    // We must trigger it synchronously here.
+    if (counterMode === 'down' && currentNumber <= 1) {
+        triggerHaptic();
+    }
     
     // Optimistic Update for local feeling
     if (currentSentence) {
@@ -472,9 +480,7 @@ const App: React.FC = () => {
       setCurrentNumber(prev => {
         if (counterMode === 'down') {
           if (prev <= 1) {
-            // TRIGGER HAPTIC FEEDBACK ON RESET
-            triggerHaptic();
-
+            // Haptic trigger was moved to the top of the function to satisfy iOS requirements
             const newLimit = generateRandomLimit();
             const nextSentence = getNextSentence(sessionFocusId);
             setRandomLimit(newLimit);
@@ -488,7 +494,7 @@ const App: React.FC = () => {
       });
       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence, generateRandomLimit, triggerHaptic]);
+  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence, generateRandomLimit, triggerHaptic, currentNumber]);
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
