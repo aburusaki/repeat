@@ -251,7 +251,7 @@ export const supabaseService = {
       pollingInterval = setInterval(() => {
         handleContentEvent();
         handleStatsEvent();
-      }, 5000); 
+      }, 3000); 
     };
 
     try {

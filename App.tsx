@@ -179,6 +179,7 @@ const App: React.FC = () => {
   // App State
   const [currentNumber, setCurrentNumber] = useState<number>(0);
   const [randomLimit, setRandomLimit] = useState<number>(3); 
+  const [countdownConfig, setCountdownConfig] = useState<number | 'random'>(3); 
   const [currentSentence, setCurrentSentence] = useState<Sentence | null>(null);
   const [counterMode, setCounterMode] = useState<'up' | 'down'>('down');
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
@@ -188,12 +189,12 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
   
   // Time Tracking State
-  const [dailyTime, setDailyTime] = useState<number>(0); // Total seconds today (DB + local)
-  const [unsyncedTime, setUnsyncedTime] = useState<number>(0); // Local delta seconds
+  const [dailyTime, setDailyTime] = useState<number>(0); 
+  const [unsyncedTime, setUnsyncedTime] = useState<number>(0); 
   const [isActiveUser, setIsActiveUser] = useState<boolean>(false);
   const lastActivityTime = useRef<number>(Date.now());
-  const ACTIVITY_THRESHOLD_MS = 2000; // 2 seconds of inactivity stops the timer
-  const SYNC_INTERVAL_MS = 10000; // Sync every 10 seconds
+  const ACTIVITY_THRESHOLD_MS = 2000; 
+  const SYNC_INTERVAL_MS = 3000; 
 
   // Theme State
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -238,7 +239,26 @@ const App: React.FC = () => {
     return stat ? stat.count : 0;
   }, [currentSentence, dailyStats]);
 
-  const generateRandomLimit = () => 3;
+  // Generate Limit based on configuration
+  const generateRandomLimit = useCallback(() => {
+    if (countdownConfig === 'random') {
+      return Math.floor(Math.random() * 7) + 1;
+    }
+    return countdownConfig;
+  }, [countdownConfig]);
+
+  // Haptic Logic (Android + iOS Switch Trick)
+  const triggerHaptic = useCallback(() => {
+    // 1. Android Standard
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(15); 
+    }
+    // 2. iOS Switch Trick
+    const label = document.getElementById('haptic-trigger');
+    if (label) {
+        label.click();
+    }
+  }, []);
 
   // --- Auth Check ---
   useEffect(() => {
@@ -258,14 +278,12 @@ const App: React.FC = () => {
     
     setAllSentences(sents);
     setAllCategories(cats);
-    setDailyStats(stats); // Service now automatically filters out the time tracker stats
+    setDailyStats(stats); 
     setHistoricalStats(history);
     setDailyTime(time);
   }, [currentUser]);
 
   // --- ACTIVITY TRACKER & TIMER ---
-  
-  // 1. Activity Listener
   useEffect(() => {
     if (!currentUser) return;
 
@@ -275,7 +293,6 @@ const App: React.FC = () => {
     };
 
     const debouncedRecord = () => {
-        // Simple throttle to avoid spamming variables on every pixel scroll
         if (Date.now() - lastActivityTime.current > 100) {
             recordActivity();
         }
@@ -298,13 +315,11 @@ const App: React.FC = () => {
     };
   }, [currentUser, isActiveUser]);
 
-  // 2. Timer Loop (1s)
   useEffect(() => {
     if (!currentUser) return;
 
     const interval = setInterval(() => {
         const now = Date.now();
-        // If last activity was within threshold, user is active
         if (now - lastActivityTime.current < ACTIVITY_THRESHOLD_MS) {
             setIsActiveUser(true);
             setDailyTime(prev => prev + 1);
@@ -317,21 +332,14 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [currentUser]);
 
-  // 3. Sync Loop (10s)
   useEffect(() => {
     if (!currentUser) return;
 
     const interval = setInterval(async () => {
         if (unsyncedTime > 0) {
-            // Capture value to send
             const timeToSend = unsyncedTime;
-            // Optimistically reset local delta
             setUnsyncedTime(0);
-            
-            // Send to DB
             const newTotal = await supabaseService.incrementDailyTime(timeToSend);
-            
-            // Reconcile if DB returned a valid total, otherwise we trust our local tick
             if (newTotal > 0) {
                  setDailyTime(newTotal);
             }
@@ -350,10 +358,8 @@ const App: React.FC = () => {
 
     if (relevant.length === 0) return null;
 
-    // If queue is empty or has invalid items, refill it
     if (sentenceQueue.current.length === 0) {
       const newQueue = [...relevant];
-      // Fisher-Yates shuffle
       for (let i = newQueue.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [newQueue[i], newQueue[j]] = [newQueue[j], newQueue[i]];
@@ -361,17 +367,13 @@ const App: React.FC = () => {
       sentenceQueue.current = newQueue;
     }
 
-    // Pop the next sentence
     let next = sentenceQueue.current.pop();
-
-    // Ensure the popped sentence is still valid
     while (next && !relevant.find(r => r.id === next?.id)) {
         if (sentenceQueue.current.length === 0) {
             return getNextSentence(focusId);
         }
         next = sentenceQueue.current.pop();
     }
-    
     if (!next) return getNextSentence(focusId);
 
     return next;
@@ -384,7 +386,7 @@ const App: React.FC = () => {
     setRandomLimit(newLimit);
     setCurrentSentence(newSentenceObj);
     setCurrentNumber(mode === 'down' ? newLimit : 1);
-  }, [getNextSentence]);
+  }, [getNextSentence, generateRandomLimit]);
 
   // Theme Effect
   useEffect(() => {
@@ -426,13 +428,10 @@ const App: React.FC = () => {
           setAllCategories(cats);
         },
         (stats) => {
-          // Filtered inside the service now, but double check
           setDailyStats(stats);
           supabaseService.getHistoricalStats(7).then(setHistoricalStats);
         },
         (totalTime) => {
-            // Update local time if DB pushes a change (e.g. from another device)
-            // Only update if the difference is significant to avoid jitter from local unsynced time
             setDailyTime(prev => Math.max(prev, totalTime));
         }
       );
@@ -473,6 +472,9 @@ const App: React.FC = () => {
       setCurrentNumber(prev => {
         if (counterMode === 'down') {
           if (prev <= 1) {
+            // TRIGGER HAPTIC FEEDBACK ON RESET
+            triggerHaptic();
+
             const newLimit = generateRandomLimit();
             const nextSentence = getNextSentence(sessionFocusId);
             setRandomLimit(newLimit);
@@ -486,13 +488,17 @@ const App: React.FC = () => {
       });
       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence]);
+  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence, generateRandomLimit, triggerHaptic]);
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
     if (!currentUser) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if typing in an input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
       if (e.code === 'Space') {
         e.preventDefault(); 
         handleInteraction();
@@ -696,6 +702,13 @@ const App: React.FC = () => {
 
   return (
     <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 dark:bg-slate-950 transition-colors duration-500 overflow-hidden">
+      
+      {/* Hidden Haptic Trigger for iOS Switch Trick */}
+      <div className="absolute opacity-0 pointer-events-none w-0 h-0 overflow-hidden">
+        <input type="checkbox" id="haptic-switch" {...{'switch': ''} as any} />
+        <label htmlFor="haptic-switch" id="haptic-trigger">Haptic</label>
+      </div>
+
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-50 dark:bg-blue-900/20 rounded-full blur-[120px] opacity-40 transition-colors duration-700"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-50 dark:bg-indigo-900/20 rounded-full blur-[120px] opacity-40 transition-colors duration-700"></div>
@@ -776,168 +789,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {showManage && (
-        <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 dark:bg-black/60 backdrop-blur-xl transition-colors duration-500">
-          <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col border border-white/50 dark:border-slate-800 overflow-hidden transition-colors duration-500">
-            <div className="p-8 md:p-12 pb-6 flex justify-between items-center border-b border-slate-50 dark:border-slate-800">
-              <div className="space-y-4">
-                <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400 dark:text-slate-500">Content Studio</h2>
-                <div className="flex gap-6">
-                  <button onClick={() => setActiveTab('create')} className={`text-[10px] font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${activeTab === 'create' ? 'text-slate-900 dark:text-slate-100 border-slate-900 dark:border-slate-100' : 'text-slate-300 dark:text-slate-600 border-transparent hover:text-slate-500 dark:hover:text-slate-400'}`}>Add Content</button>
-                  <button onClick={() => setActiveTab('library')} className={`text-[10px] font-black uppercase tracking-widest pb-2 border-b-2 transition-all ${activeTab === 'library' ? 'text-slate-900 dark:text-slate-100 border-slate-900 dark:border-slate-100' : 'text-slate-300 dark:text-slate-600 border-transparent hover:text-slate-500 dark:hover:text-slate-400'}`}>Manage Library ({allSentences.length})</button>
-                </div>
-              </div>
-              <div className="flex gap-4">
-                  <button onClick={handleLogout} className="px-6 py-3 bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-red-100 dark:hover:bg-red-900/40 transition-all">
-                    Log Out
-                  </button>
-                  <button onClick={() => setShowManage(false)} className="px-8 py-3 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-100 dark:shadow-none">Close</button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-8 md:p-12">
-              {activeTab === 'create' ? (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
-                  <section className="space-y-8">
-                    <div>
-                      <h3 className="text-[10px] font-black text-slate-900 dark:text-slate-100 uppercase tracking-[0.3em] mb-6">Create Categories</h3>
-                      <form onSubmit={handleAddCategory} className="flex gap-2 mb-8">
-                        <input type="text" value={newCategory} onChange={e => setNewCategory(e.target.value)} placeholder="e.g. Resilience" className="flex-1 px-5 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 transition-all text-sm text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600" />
-                        <button type="submit" disabled={isSyncing} className="px-6 py-4 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 disabled:opacity-50">Add</button>
-                      </form>
-                      <div className="flex flex-wrap gap-2">
-                        {allCategories.map(cat => (
-                          <span key={cat.id} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-bold uppercase tracking-wider">{cat.name}</span>
-                        ))}
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="space-y-8">
-                    <h3 className="text-[10px] font-black text-slate-900 dark:text-slate-100 uppercase tracking-[0.3em] mb-6">New Sentence</h3>
-                    <form onSubmit={handleAddSentence} className="space-y-8">
-                      <textarea value={newSentenceText} onChange={e => setNewSentenceText(e.target.value)} placeholder="Enter a sentence that appears on countdown zero..." rows={4} className="w-full px-6 py-5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-3xl focus:outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 transition-all text-sm font-serif italic text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600" />
-                      <div className="space-y-4">
-                        <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Tag Categories</p>
-                        <div className="flex flex-wrap gap-2">
-                          {allCategories.map(cat => (
-                            <button key={cat.id} type="button" onClick={() => setSelectedCats(prev => prev.includes(cat.id) ? prev.filter(c => c !== cat.id) : [...prev, cat.id])} className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${selectedCats.includes(cat.id) ? 'bg-blue-600 border-blue-600 text-white shadow-xl shadow-blue-50 dark:shadow-none' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:border-slate-400 dark:hover:border-slate-500'}`}>
-                              {cat.name}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <button type="submit" disabled={isSyncing || !newSentenceText.trim()} className="w-full py-5 bg-blue-600 text-white rounded-3xl text-[10px] font-black uppercase tracking-[0.3em] hover:bg-blue-700 transition-all shadow-2xl shadow-blue-100 dark:shadow-none disabled:opacity-50">
-                        {isSyncing ? 'Synchronizing...' : 'Commit to Cloud'}
-                      </button>
-                    </form>
-                  </section>
-                </div>
-              ) : (
-                <div className="space-y-8">
-                  <div className="space-y-6 mb-10">
-                    <div className="flex-1 relative">
-                      <input 
-                        type="text" 
-                        placeholder="Search your wisdom library..." 
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                        className="w-full px-8 py-5 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-100 dark:focus:ring-blue-900 transition-all text-sm italic font-serif text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600"
-                      />
-                      <svg xmlns="http://www.w3.org/2000/svg" className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                    </div>
-
-                    <div className="flex flex-col gap-3">
-                      <p className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500 ml-2">Browse by Category</p>
-                      <div className="flex flex-wrap gap-2 overflow-x-auto pb-2 no-scrollbar">
-                        <button 
-                          onClick={() => setFilterCategoryId('all')}
-                          className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === 'all' ? 'bg-slate-900 dark:bg-slate-100 border-slate-900 dark:border-slate-100 text-white dark:text-slate-900' : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:border-slate-300 dark:hover:border-slate-600'}`}
-                        >
-                          All Entries
-                        </button>
-                        {allCategories.map(cat => (
-                          <button 
-                            key={cat.id} 
-                            onClick={() => setFilterCategoryId(cat.id)}
-                            className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all whitespace-nowrap ${filterCategoryId === cat.id ? 'bg-slate-900 dark:bg-slate-100 border-slate-900 dark:border-slate-100 text-white dark:text-slate-900 shadow-lg' : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:border-slate-300 dark:hover:border-slate-600'}`}
-                          >
-                            {cat.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    {filteredSentences.map(s => (
-                      <div key={s.id} className={`p-8 rounded-3xl border transition-all ${editingId === s.id ? 'bg-blue-50/50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 ring-2 ring-blue-50 dark:ring-blue-900' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-600 shadow-sm hover:shadow-md'}`}>
-                        {editingId === s.id ? (
-                          <div className="space-y-6">
-                            <textarea 
-                              value={editForm.text} 
-                              onChange={e => setEditForm(prev => ({ ...prev, text: e.target.value }))}
-                              className="w-full p-6 bg-white dark:bg-slate-950 border border-blue-100 dark:border-blue-900 rounded-2xl text-sm font-serif italic focus:outline-none focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-800 text-slate-800 dark:text-slate-200"
-                              rows={3}
-                            />
-                             <div className="flex flex-col gap-2">
-                                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">Today's Count</label>
-                                <input 
-                                    type="number"
-                                    min="0"
-                                    value={editForm.count}
-                                    onChange={e => setEditForm(prev => ({ ...prev, count: parseInt(e.target.value) || 0 }))}
-                                    className="w-full md:w-32 px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800 dark:text-slate-200 text-sm font-bold"
-                                />
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {allCategories.map(cat => (
-                                <button 
-                                  key={cat.id} 
-                                  type="button" 
-                                  onClick={() => setEditForm(prev => ({ ...prev, categoryIds: prev.categoryIds.includes(cat.id) ? prev.categoryIds.filter(id => id !== cat.id) : [...prev.categoryIds, cat.id] }))}
-                                  className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider border transition-all ${editForm.categoryIds.includes(cat.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500'}`}
-                                >
-                                  {cat.name}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="flex gap-3 justify-end pt-4">
-                              <button onClick={() => setEditingId(null)} className="px-6 py-2 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 dark:hover:bg-slate-700">Cancel</button>
-                              <button onClick={() => handleUpdateSentence(s.id)} disabled={isSyncing} className="px-6 py-2 bg-blue-600 text-white rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 shadow-lg shadow-blue-100 dark:shadow-none">Save Changes</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col md:flex-row justify-between gap-6">
-                            <div className="space-y-4">
-                              <p className="text-lg font-serif italic text-slate-800 dark:text-slate-200 leading-relaxed">"{s.text}"</p>
-                              <div className="flex flex-wrap gap-2">
-                                {(s.categoryIds || []).map(catId => {
-                                  const cat = allCategories.find(c => c.id === catId);
-                                  return cat ? <span key={catId} className="px-3 py-1 bg-slate-50 dark:bg-slate-800 text-slate-400 dark:text-slate-500 rounded-full text-[9px] font-black uppercase tracking-widest border border-slate-100 dark:border-slate-700">{cat.name}</span> : null;
-                                })}
-                              </div>
-                            </div>
-                            <div className="flex gap-2 items-center justify-end">
-                              <button onClick={() => handleStartEdit(s)} className="p-3 text-slate-400 dark:text-slate-600 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121(0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                              </button>
-                              <button onClick={() => handleDeleteSentence(s.id)} className="p-3 text-slate-400 dark:text-slate-600 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-all">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className={`absolute bottom-8 w-full flex flex-col items-center gap-6 transition-all duration-700 ${showStats || showManage ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
         
         <div className="w-full max-w-xs md:max-w-md px-6 overflow-x-auto no-scrollbar flex items-center justify-center gap-4 py-2">
@@ -977,6 +828,29 @@ const App: React.FC = () => {
             <button onClick={(e) => { e.stopPropagation(); handleLogout(); }} className="group p-3 text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 transition-all rounded-full border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm hover:shadow-md hover:-translate-y-0.5" title="Sign Out">
                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
             </button>
+
+            {/* NEW COUNTDOWN CONFIG CONTROL */}
+            <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-2 border-r border-slate-100 dark:border-slate-800 pr-4 mr-4">
+                <label className="text-[8px] font-black uppercase tracking-widest text-slate-300 dark:text-slate-600">Count</label>
+                <input 
+                    type="number" 
+                    min="1" 
+                    max="50"
+                    value={countdownConfig === 'random' ? '' : countdownConfig}
+                    placeholder="RND"
+                    onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        if (!isNaN(val) && val > 0) setCountdownConfig(val);
+                    }}
+                    className="w-8 bg-transparent border-b border-slate-200 dark:border-slate-800 text-center text-[10px] font-bold text-slate-500 dark:text-slate-400 focus:outline-none focus:border-blue-500 transition-colors p-0"
+                />
+                <button 
+                    onClick={() => setCountdownConfig('random')}
+                    className={`text-[8px] font-black uppercase tracking-widest transition-colors ${countdownConfig === 'random' ? 'text-blue-500' : 'text-slate-300 dark:text-slate-700 hover:text-slate-500'}`}
+                >
+                    RND
+                </button>
+            </div>
 
             <button 
               onClick={toggleMode} 
