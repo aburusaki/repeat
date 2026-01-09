@@ -186,7 +186,6 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
   const [showStats, setShowStats] = useState<boolean>(false);
   const [showManage, setShowManage] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'create' | 'library'>('create');
   
   // Time Tracking State
   const [dailyTime, setDailyTime] = useState<number>(0); 
@@ -209,7 +208,11 @@ const App: React.FC = () => {
   // Interaction throttling refs
   const lastScrollTime = useRef<number>(0);
   const touchStartY = useRef<number>(0);
+  const currentNumberRef = useRef(currentNumber);
   
+  // Keep ref in sync
+  useEffect(() => { currentNumberRef.current = currentNumber; }, [currentNumber]);
+
   // Sentence Selection Queue (Shuffle Bag)
   const sentenceQueue = useRef<Sentence[]>([]);
 
@@ -451,6 +454,13 @@ const App: React.FC = () => {
     }
   }, [allSentences, currentSentence, resetCycle, counterMode, sessionFocusId]);
 
+  // Watch for Countdown Config Changes and Reset Immediately
+  useEffect(() => {
+    if (allSentences.length > 0) {
+        resetCycle(counterMode, sessionFocusId);
+    }
+  }, [countdownConfig, resetCycle, counterMode, sessionFocusId, allSentences.length]);
+
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
     setSessionFocusId(id);
@@ -461,11 +471,12 @@ const App: React.FC = () => {
   const handleInteraction = useCallback(() => {
     if (isAnimating || showStats || showManage) return;
 
+    // Use REF to get current value synchronously to decide on haptics
+    const currentVal = currentNumberRef.current;
+
     // FIX FOR IOS HAPTICS:
     // Browsers (especially Safari) require haptics/audio to be triggered directly by a user action.
-    // Waiting for the 250ms animation timeout causes the browser to "lose" the user gesture context.
-    // We must trigger it synchronously here.
-    if (counterMode === 'down' && currentNumber <= 1) {
+    if (counterMode === 'down' && currentVal <= 1) {
         triggerHaptic();
     }
     
@@ -477,24 +488,29 @@ const App: React.FC = () => {
     setIsAnimating(true);
     
     setTimeout(() => {
-      setCurrentNumber(prev => {
-        if (counterMode === 'down') {
-          if (prev <= 1) {
-            // Haptic trigger was moved to the top of the function to satisfy iOS requirements
-            const newLimit = generateRandomLimit();
-            const nextSentence = getNextSentence(sessionFocusId);
-            setRandomLimit(newLimit);
-            setCurrentSentence(nextSentence);
-            return newLimit;
-          }
-          return prev - 1;
-        } else {
-          return prev + 1;
-        }
-      });
-      setIsAnimating(false);
+       // Logic performed using stable Ref value to avoid stale closure issues
+       // and avoid side-effects inside setState updaters.
+       const valNow = currentNumberRef.current;
+
+       if (counterMode === 'down') {
+         if (valNow <= 1) {
+             // Reset Logic
+             const newLimit = generateRandomLimit();
+             const nextSentence = getNextSentence(sessionFocusId);
+             
+             setRandomLimit(newLimit);
+             setCurrentSentence(nextSentence);
+             setCurrentNumber(newLimit);
+         } else {
+             setCurrentNumber(valNow - 1);
+         }
+       } else {
+         setCurrentNumber(valNow + 1);
+       }
+       
+       setIsAnimating(false);
     }, 250);
-  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence, generateRandomLimit, triggerHaptic, currentNumber]);
+  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence, generateRandomLimit, triggerHaptic]);
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
