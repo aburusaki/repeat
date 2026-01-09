@@ -177,7 +177,7 @@ const App: React.FC = () => {
   const [loadingAuth, setLoadingAuth] = useState(true);
 
   // App State
-  const [currentNumber, setCurrentNumber] = useState<number>(0);
+  const [currentNumber, setCurrentNumber] = useState<number>(3);
   const [randomLimit, setRandomLimit] = useState<number>(3); 
   const [countdownConfig, setCountdownConfig] = useState<number | 'random'>(3); 
   const [currentSentence, setCurrentSentence] = useState<Sentence | null>(null);
@@ -205,13 +205,19 @@ const App: React.FC = () => {
 
   const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
 
-  // Interaction throttling refs
+  // Interaction throttling & State Refs
   const lastScrollTime = useRef<number>(0);
   const touchStartY = useRef<number>(0);
-  const currentNumberRef = useRef(currentNumber);
   
-  // Keep ref in sync
+  // REFS for stable access in async operations
+  const currentNumberRef = useRef(currentNumber);
+  const countdownConfigRef = useRef(countdownConfig);
+  const sessionFocusIdRef = useRef(sessionFocusId);
+
+  // Sync Refs
   useEffect(() => { currentNumberRef.current = currentNumber; }, [currentNumber]);
+  useEffect(() => { countdownConfigRef.current = countdownConfig; }, [countdownConfig]);
+  useEffect(() => { sessionFocusIdRef.current = sessionFocusId; }, [sessionFocusId]);
 
   // Sentence Selection Queue (Shuffle Bag)
   const sentenceQueue = useRef<Sentence[]>([]);
@@ -242,13 +248,15 @@ const App: React.FC = () => {
     return stat ? stat.count : 0;
   }, [currentSentence, dailyStats]);
 
-  // Generate Limit based on configuration
-  const generateRandomLimit = useCallback(() => {
-    if (countdownConfig === 'random') {
+  // Stable Limit Generator using Ref
+  const getNextLimit = useCallback(() => {
+    const cfg = countdownConfigRef.current;
+    if (cfg === 'random') {
       return Math.floor(Math.random() * 7) + 1;
     }
-    return countdownConfig;
-  }, [countdownConfig]);
+    // Default to 3 if invalid number
+    return typeof cfg === 'number' && cfg > 0 ? cfg : 3;
+  }, []);
 
   // Haptic Logic (Android + iOS Switch Trick)
   const triggerHaptic = useCallback(() => {
@@ -383,13 +391,13 @@ const App: React.FC = () => {
   }, [allSentences]);
 
   const resetCycle = useCallback((mode: 'up' | 'down', focusId: string | number | 'all') => {
-    const newLimit = generateRandomLimit();
+    const newLimit = getNextLimit();
     const newSentenceObj = getNextSentence(focusId);
     
     setRandomLimit(newLimit);
     setCurrentSentence(newSentenceObj);
     setCurrentNumber(mode === 'down' ? newLimit : 1);
-  }, [getNextSentence, generateRandomLimit]);
+  }, [getNextSentence, getNextLimit]);
 
   // Theme Effect
   useEffect(() => {
@@ -475,7 +483,6 @@ const App: React.FC = () => {
     const currentVal = currentNumberRef.current;
 
     // FIX FOR IOS HAPTICS:
-    // Browsers (especially Safari) require haptics/audio to be triggered directly by a user action.
     if (counterMode === 'down' && currentVal <= 1) {
         triggerHaptic();
     }
@@ -488,15 +495,14 @@ const App: React.FC = () => {
     setIsAnimating(true);
     
     setTimeout(() => {
-       // Logic performed using stable Ref value to avoid stale closure issues
-       // and avoid side-effects inside setState updaters.
+       // Logic performed using stable Ref values to avoid stale closures
        const valNow = currentNumberRef.current;
 
        if (counterMode === 'down') {
          if (valNow <= 1) {
-             // Reset Logic
-             const newLimit = generateRandomLimit();
-             const nextSentence = getNextSentence(sessionFocusId);
+             // Reset Logic using Refs for latest configuration
+             const newLimit = getNextLimit();
+             const nextSentence = getNextSentence(sessionFocusIdRef.current);
              
              setRandomLimit(newLimit);
              setCurrentSentence(nextSentence);
@@ -510,7 +516,7 @@ const App: React.FC = () => {
        
        setIsAnimating(false);
     }, 250);
-  }, [isAnimating, showStats, showManage, currentSentence, counterMode, sessionFocusId, getNextSentence, generateRandomLimit, triggerHaptic]);
+  }, [isAnimating, showStats, showManage, currentSentence, counterMode, getNextSentence, getNextLimit, triggerHaptic]);
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
