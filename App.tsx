@@ -16,7 +16,6 @@ const formatTime = (seconds: number) => {
 // --- CHART COMPONENT ---
 const StatsChart: React.FC<{ stats: DailyStat[] }> = ({ stats }) => {
   const chartData = useMemo(() => {
-    // Generate last 7 days including today
     const days = [];
     const today = new Date();
     for (let i = 6; i >= 0; i--) {
@@ -31,7 +30,6 @@ const StatsChart: React.FC<{ stats: DailyStat[] }> = ({ stats }) => {
             .reduce((sum, curr) => sum + curr.count, 0);
         
         const dateObj = new Date(dateStr);
-        // Format: "Mon", "Tue" etc.
         const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'narrow' });
         
         return { date: dateStr, total, dayName };
@@ -40,7 +38,7 @@ const StatsChart: React.FC<{ stats: DailyStat[] }> = ({ stats }) => {
     return aggregated;
   }, [stats]);
 
-  const maxVal = Math.max(...chartData.map(d => d.total), 1); // Avoid div by zero
+  const maxVal = Math.max(...chartData.map(d => d.total), 1); 
 
   return (
     <div className="w-full h-48 flex items-end justify-between gap-2 md:gap-4 mb-6 px-2">
@@ -50,20 +48,15 @@ const StatsChart: React.FC<{ stats: DailyStat[] }> = ({ stats }) => {
         
         return (
           <div key={d.date} className="flex-1 flex flex-col items-center gap-2 group">
-            {/* Numeric Label */}
             <div className={`text-[10px] font-bold transition-all ${isToday ? 'text-blue-600 dark:text-blue-400 scale-110' : 'text-slate-400 dark:text-slate-500'} ${d.total === 0 ? 'opacity-0' : 'opacity-100'}`}>
                 {d.total}
             </div>
-            
-            {/* Bar */}
             <div className="relative w-full flex items-end h-24 bg-slate-100 dark:bg-slate-800 rounded-md overflow-hidden">
                 <div 
                     style={{ height: `${heightPct}%` }} 
                     className={`w-full transition-all duration-1000 ease-out rounded-t-md ${isToday ? 'bg-blue-500 dark:bg-blue-600' : 'bg-slate-300 dark:bg-slate-600 group-hover:bg-slate-400 dark:group-hover:bg-slate-500'}`}
                 ></div>
             </div>
-            
-            {/* Day Label */}
             <span className={`text-[9px] font-black uppercase tracking-wider ${isToday ? 'text-blue-500 dark:text-blue-400' : 'text-slate-300 dark:text-slate-600'}`}>
                 {d.dayName}
             </span>
@@ -102,7 +95,6 @@ const AuthScreen: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
         setError(apiError);
       } else {
         if (!isLogin) {
-            // Auto login after signup if successful
             await supabaseService.signIn(username, password);
         }
         onLogin();
@@ -119,13 +111,11 @@ const AuthScreen: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
        <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-50 dark:bg-blue-900/20 rounded-full blur-[120px] opacity-40"></div>
       </div>
-      
       <div className="relative z-10 w-full max-w-sm">
         <div className="text-center mb-10">
             <h1 className="text-3xl font-serif italic text-slate-800 dark:text-slate-100 mb-2">Zen Counter</h1>
             <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Your Personal Space</p>
         </div>
-
         <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
                 <input 
@@ -145,9 +135,7 @@ const AuthScreen: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                     required
                 />
             </div>
-            
             {error && <div className="text-red-500 text-xs text-center font-bold uppercase tracking-wider">{error}</div>}
-
             <button 
                 type="submit" 
                 disabled={loading}
@@ -156,7 +144,6 @@ const AuthScreen: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 {loading ? 'Processing...' : (isLogin ? 'Enter' : 'Create Account')}
             </button>
         </form>
-
         <div className="mt-8 text-center">
             <button 
                 onClick={() => { setIsLogin(!isLogin); setError(null); }}
@@ -210,14 +197,18 @@ const App: React.FC = () => {
   const touchStartY = useRef<number>(0);
   
   // REFS for stable access in async operations
+  // This prevents the "stale closure" bugs and "auto-change" bugs
   const currentNumberRef = useRef(currentNumber);
   const countdownConfigRef = useRef(countdownConfig);
   const sessionFocusIdRef = useRef(sessionFocusId);
+  const counterModeRef = useRef(counterMode);
+  const allSentencesRef = useRef<Sentence[]>([]);
 
   // Sync Refs
   useEffect(() => { currentNumberRef.current = currentNumber; }, [currentNumber]);
   useEffect(() => { countdownConfigRef.current = countdownConfig; }, [countdownConfig]);
   useEffect(() => { sessionFocusIdRef.current = sessionFocusId; }, [sessionFocusId]);
+  useEffect(() => { counterModeRef.current = counterMode; }, [counterMode]);
 
   // Sentence Selection Queue (Shuffle Bag)
   const sentenceQueue = useRef<Sentence[]>([]);
@@ -260,11 +251,9 @@ const App: React.FC = () => {
 
   // Haptic Logic (Android + iOS Switch Trick)
   const triggerHaptic = useCallback(() => {
-    // 1. Android Standard
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(15); 
     }
-    // 2. iOS Switch Trick (Hidden Label Click)
     const label = document.getElementById('haptic-trigger');
     if (label) {
         label.click();
@@ -294,28 +283,22 @@ const App: React.FC = () => {
     setDailyTime(time);
   }, [currentUser]);
 
-  // --- ACTIVITY TRACKER & TIMER ---
+  // --- ACTIVITY TRACKER ---
   useEffect(() => {
     if (!currentUser) return;
-
     const recordActivity = () => {
         lastActivityTime.current = Date.now();
         if (!isActiveUser) setIsActiveUser(true);
     };
-
     const debouncedRecord = () => {
-        if (Date.now() - lastActivityTime.current > 100) {
-            recordActivity();
-        }
+        if (Date.now() - lastActivityTime.current > 100) recordActivity();
     };
-
     window.addEventListener('mousemove', debouncedRecord);
     window.addEventListener('mousedown', recordActivity);
     window.addEventListener('touchstart', recordActivity);
     window.addEventListener('keydown', recordActivity);
     window.addEventListener('scroll', debouncedRecord);
     window.addEventListener('click', recordActivity);
-
     return () => {
         window.removeEventListener('mousemove', debouncedRecord);
         window.removeEventListener('mousedown', recordActivity);
@@ -328,7 +311,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!currentUser) return;
-
     const interval = setInterval(() => {
         const now = Date.now();
         if (now - lastActivityTime.current < ACTIVITY_THRESHOLD_MS) {
@@ -339,38 +321,40 @@ const App: React.FC = () => {
             setIsActiveUser(false);
         }
     }, 1000);
-
     return () => clearInterval(interval);
   }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
-
     const interval = setInterval(async () => {
         if (unsyncedTime > 0) {
             const timeToSend = unsyncedTime;
             setUnsyncedTime(0);
             const newTotal = await supabaseService.incrementDailyTime(timeToSend);
-            if (newTotal > 0) {
-                 setDailyTime(newTotal);
-            }
+            if (newTotal > 0) setDailyTime(newTotal);
         }
     }, SYNC_INTERVAL_MS);
-
     return () => clearInterval(interval);
   }, [currentUser, unsyncedTime]);
 
 
-  // Logic to get next sentence using shuffle bag (queue)
+  // --- CORE LOGIC ---
+
+  // Stable Sentence Fetcher
   const getNextSentence = useCallback((focusId: string | number | 'all') => {
-    const relevant = allSentences.filter(s => 
+    const sents = allSentencesRef.current;
+    
+    // Filter
+    const relevant = sents.filter(s => 
       focusId === 'all' || (s.categoryIds || []).includes(focusId)
     );
 
     if (relevant.length === 0) return null;
 
+    // Refill Queue if empty
     if (sentenceQueue.current.length === 0) {
       const newQueue = [...relevant];
+      // Fisher-Yates Shuffle
       for (let i = newQueue.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [newQueue[i], newQueue[j]] = [newQueue[j], newQueue[i]];
@@ -378,9 +362,13 @@ const App: React.FC = () => {
       sentenceQueue.current = newQueue;
     }
 
+    // Pick next
     let next = sentenceQueue.current.pop();
+    
+    // Validate existence (in case of deletions)
     while (next && !relevant.find(r => r.id === next?.id)) {
         if (sentenceQueue.current.length === 0) {
+            // Recursive retry if queue exhausted by invalid entries
             return getNextSentence(focusId);
         }
         next = sentenceQueue.current.pop();
@@ -388,8 +376,9 @@ const App: React.FC = () => {
     if (!next) return getNextSentence(focusId);
 
     return next;
-  }, [allSentences]);
+  }, []); // Stable: No dependencies
 
+  // Stable Reset Logic
   const resetCycle = useCallback((mode: 'up' | 'down', focusId: string | number | 'all') => {
     const newLimit = getNextLimit();
     const newSentenceObj = getNextSentence(focusId);
@@ -399,14 +388,35 @@ const App: React.FC = () => {
     setCurrentNumber(mode === 'down' ? newLimit : 1);
   }, [getNextSentence, getNextLimit]);
 
+  // Update Data Ref and Handle Initial Load ONLY
+  useEffect(() => {
+    allSentencesRef.current = allSentences;
+    
+    // Only auto-start if we haven't started yet.
+    // This prevents background syncs from resetting the cycle unexpectedly.
+    if (!currentSentence && allSentences.length > 0) {
+        resetCycle(counterMode, sessionFocusId);
+    }
+  }, [allSentences, currentSentence, resetCycle, counterMode, sessionFocusId]);
+
+  // Handle Manual Configuration Changes
+  // This is split from the data effect to prevent "auto-changes"
+  useEffect(() => {
+    if (allSentencesRef.current.length > 0) {
+        // We read mode from Ref to ensure we don't need it in deps
+        // (though including it wouldn't hurt, this is safer for stability)
+        resetCycle(counterModeRef.current, sessionFocusId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdownConfig, sessionFocusId]); // Explicitly ONLY watch these two inputs
+
+  // ---
+
   // Theme Effect
   useEffect(() => {
     const root = window.document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
+    if (theme === 'dark') root.classList.add('dark');
+    else root.classList.remove('dark');
     localStorage.setItem('theme', theme);
   }, [theme]);
 
@@ -418,7 +428,6 @@ const App: React.FC = () => {
   // Data Initialization
   useEffect(() => {
     if (!currentUser) return;
-
     const init = async () => {
       setIsSyncing(true);
       try {
@@ -455,39 +464,26 @@ const App: React.FC = () => {
     };
   }, [currentUser, refreshData]); 
 
-  // Auto-start cycle when data is available
-  useEffect(() => {
-    if (currentSentence === null && allSentences.length > 0) {
-        resetCycle(counterMode, sessionFocusId);
-    }
-  }, [allSentences, currentSentence, resetCycle, counterMode, sessionFocusId]);
-
-  // Watch for Countdown Config Changes and Reset Immediately
-  useEffect(() => {
-    if (allSentences.length > 0) {
-        resetCycle(counterMode, sessionFocusId);
-    }
-  }, [countdownConfig, resetCycle, counterMode, sessionFocusId, allSentences.length]);
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
     setSessionFocusId(id);
     sentenceQueue.current = []; 
-    resetCycle(counterMode, id);
+    // Effect handles reset via sessionFocusId dependency
   };
 
   const handleInteraction = useCallback(() => {
     if (isAnimating || showStats || showManage) return;
 
-    // Use REF to get current value synchronously to decide on haptics
+    // Use REF to get current value synchronously
     const currentVal = currentNumberRef.current;
+    const mode = counterModeRef.current;
 
     // FIX FOR IOS HAPTICS:
-    if (counterMode === 'down' && currentVal <= 1) {
+    if (mode === 'down' && currentVal <= 1) {
         triggerHaptic();
     }
     
-    // Optimistic Update for local feeling
     if (currentSentence) {
        supabaseService.incrementStat(currentSentence.id);
     }
@@ -495,12 +491,12 @@ const App: React.FC = () => {
     setIsAnimating(true);
     
     setTimeout(() => {
-       // Logic performed using stable Ref values to avoid stale closures
+       // Re-read stable refs
        const valNow = currentNumberRef.current;
 
-       if (counterMode === 'down') {
+       if (mode === 'down') {
          if (valNow <= 1) {
-             // Reset Logic using Refs for latest configuration
+             // Reset Logic using Refs
              const newLimit = getNextLimit();
              const nextSentence = getNextSentence(sessionFocusIdRef.current);
              
@@ -516,17 +512,15 @@ const App: React.FC = () => {
        
        setIsAnimating(false);
     }, 250);
-  }, [isAnimating, showStats, showManage, currentSentence, counterMode, getNextSentence, getNextLimit, triggerHaptic]);
+  }, [isAnimating, showStats, showManage, currentSentence, getNextSentence, getNextLimit, triggerHaptic]);
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
     if (!currentUser) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if typing in an input
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
-
       if (e.code === 'Space') {
         e.preventDefault(); 
         handleInteraction();
@@ -624,12 +618,9 @@ const App: React.FC = () => {
 
   const handleUpdateSentence = async (id: string | number) => {
     setIsSyncing(true);
-    
     const countPromise = supabaseService.updateDailyCount(id, editForm.count);
     const contentPromise = supabaseService.updateSentence(id, editForm.text, editForm.categoryIds);
-
     const [countResult, contentResult] = await Promise.all([countPromise, contentPromise]);
-
     if (contentResult.success && countResult.success) {
       setEditingId(null);
       refreshData();
@@ -664,11 +655,8 @@ const App: React.FC = () => {
   const handleResetAllCounters = async () => {
     if (confirm("Are you sure you want to reset all counters to 0?")) {
       const { success, error } = await supabaseService.resetAllStats();
-      if (!success) {
-        alert(`Reset Error: ${error}`);
-      } else {
-        refreshData();
-      }
+      if (!success) alert(`Reset Error: ${error}`);
+      else refreshData();
     }
   };
 
@@ -731,8 +719,6 @@ const App: React.FC = () => {
   return (
     <div onClick={handleInteraction} className="fixed inset-0 flex flex-col items-center justify-center cursor-pointer select-none bg-slate-50 dark:bg-slate-950 transition-colors duration-500 overflow-hidden">
       
-      {/* Hidden Haptic Trigger for iOS Switch Trick */}
-      {/* MUST be part of DOM at all times */}
       <div className="absolute opacity-0 pointer-events-none w-0 h-0 overflow-hidden" aria-hidden="true">
         <label id="haptic-trigger">
             <input type="checkbox" {...{'switch': ''} as any} />
@@ -744,13 +730,11 @@ const App: React.FC = () => {
         <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] bg-indigo-50 dark:bg-indigo-900/20 rounded-full blur-[120px] opacity-40 transition-colors duration-700"></div>
       </div>
 
-      {/* TOP MENU BAR (RESPONSIVE) */}
+      {/* TOP MENU BAR */}
       <div 
         className={`absolute top-0 w-full z-20 flex flex-col gap-4 pt-6 pb-6 px-6 bg-gradient-to-b from-slate-50/90 via-slate-50/50 to-transparent dark:from-slate-950/90 dark:via-slate-950/50 transition-all duration-700 ${showStats || showManage ? 'opacity-0 -translate-y-4 pointer-events-none' : 'opacity-100 translate-y-0'}`}
-        onClick={(e) => e.stopPropagation()} // Prevent clicking background when using menu
+        onClick={(e) => e.stopPropagation()} 
       >
-        
-        {/* ROW 1: Categories (Scrollable) */}
          <div className="w-full overflow-x-auto no-scrollbar flex items-center justify-center gap-3">
             <button 
               onClick={(e) => handleFocusChange(e, 'all')}
@@ -769,10 +753,7 @@ const App: React.FC = () => {
             ))}
         </div>
 
-        {/* ROW 2: All Controls (Wrapped) */}
         <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-4">
-            
-            {/* Group: Time & Sync */}
             <div className="flex items-center gap-3">
                  <div className={`transition-all duration-500 flex items-center gap-2 ${isActiveUser ? 'opacity-100' : 'opacity-50'}`}>
                     <div className={`w-1.5 h-1.5 rounded-full ${isActiveUser ? 'bg-green-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600'}`}></div>
@@ -786,7 +767,6 @@ const App: React.FC = () => {
                  </div>
             </div>
 
-            {/* Group: Main Actions */}
             <div className="flex items-center gap-3">
                 <button onClick={(e) => { e.stopPropagation(); setShowStats(true); }} className="text-slate-300 dark:text-slate-600 text-[9px] font-black tracking-[0.2em] uppercase hover:text-slate-900 dark:hover:text-slate-300 transition-colors">Logs</button>
                 
@@ -807,7 +787,6 @@ const App: React.FC = () => {
                 </button>
             </div>
 
-            {/* Group: Configuration */}
             <div className="flex items-center gap-3 pl-3 border-l border-slate-100 dark:border-slate-800">
                 <div onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
                     <label className="text-[8px] font-black uppercase tracking-widest text-slate-300 dark:text-slate-600">Max</label>
@@ -840,7 +819,6 @@ const App: React.FC = () => {
             </div>
         </div>
 
-        {/* Progress Dots (Now under the menu) */}
         <div className="flex gap-2 items-center justify-center mt-2">
            {counterMode === 'down' ? (
              [...Array(randomLimit)].map((_, i) => (
@@ -859,7 +837,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content (Centered) */}
+      {/* Main Content */}
       <div className={`relative z-10 text-center px-10 w-full max-w-5xl transition-all duration-700 mt-20 ${showStats || showManage ? 'blur-md opacity-20 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
         <div className="flex flex-col items-center gap-2 mb-8">
            <div className={`flex items-center justify-center gap-4 transition-all duration-500 ease-in-out ${isAnimating ? 'opacity-20 -translate-y-1' : 'opacity-100 translate-y-0'}`}>
@@ -885,7 +863,6 @@ const App: React.FC = () => {
               <button onClick={() => setShowStats(false)} className="px-6 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-200 dark:shadow-none">Close</button>
             </div>
             
-            {/* HISTORICAL CHART */}
             <div className="px-8 mt-4">
                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-600 mb-2">Last 7 Days</h3>
                  <StatsChart stats={historicalStats} />
