@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabaseService } from './services/supabaseService';
 import { Category, Sentence, DailyStat } from './types';
@@ -190,6 +189,22 @@ const App: React.FC = () => {
     return 'light';
   });
 
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next = prev === 'light' ? 'dark' : 'light';
+      localStorage.setItem('theme', next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
   const [sessionFocusId, setSessionFocusId] = useState<string | number | 'all'>('all');
 
   // Interaction throttling & State Refs
@@ -197,12 +212,12 @@ const App: React.FC = () => {
   const touchStartY = useRef<number>(0);
   
   // REFS for stable access in async operations
-  // This prevents the "stale closure" bugs and "auto-change" bugs
   const currentNumberRef = useRef(currentNumber);
   const countdownConfigRef = useRef(countdownConfig);
   const sessionFocusIdRef = useRef(sessionFocusId);
   const counterModeRef = useRef(counterMode);
   const allSentencesRef = useRef<Sentence[]>([]);
+  const lastShownIdRef = useRef<string | number | null>(null);
 
   // Sync Refs
   useEffect(() => { currentNumberRef.current = currentNumber; }, [currentNumber]);
@@ -249,7 +264,7 @@ const App: React.FC = () => {
     return typeof cfg === 'number' && cfg > 0 ? cfg : 3;
   }, []);
 
-  // Haptic Logic (Android + iOS Switch Trick)
+  // Haptic Logic
   const triggerHaptic = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate(15); 
@@ -338,9 +353,8 @@ const App: React.FC = () => {
   }, [currentUser, unsyncedTime]);
 
 
-  // --- CORE LOGIC ---
+  // --- CORE LOGIC: RANDOMIZED ROUND ROBIN ---
 
-  // Stable Sentence Fetcher
   const getNextSentence = useCallback((focusId: string | number | 'all') => {
     const sents = allSentencesRef.current;
     
@@ -354,29 +368,41 @@ const App: React.FC = () => {
     // Refill Queue if empty
     if (sentenceQueue.current.length === 0) {
       const newQueue = [...relevant];
+      
       // Fisher-Yates Shuffle
       for (let i = newQueue.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [newQueue[i], newQueue[j]] = [newQueue[j], newQueue[i]];
       }
+
+      // Boundary Check: Prevent immediate repeat when cycle restarts
+      if (lastShownIdRef.current !== null && newQueue.length > 1) {
+          const nextUp = newQueue[newQueue.length - 1]; // We pop from end
+          if (nextUp.id === lastShownIdRef.current) {
+             // Swap last item (nextUp) with first item
+             [newQueue[newQueue.length - 1], newQueue[0]] = [newQueue[0], newQueue[newQueue.length - 1]];
+          }
+      }
+
       sentenceQueue.current = newQueue;
     }
 
     // Pick next
     let next = sentenceQueue.current.pop();
     
-    // Validate existence (in case of deletions)
+    // Validate (in case sentence was deleted)
     while (next && !relevant.find(r => r.id === next?.id)) {
         if (sentenceQueue.current.length === 0) {
-            // Recursive retry if queue exhausted by invalid entries
             return getNextSentence(focusId);
         }
         next = sentenceQueue.current.pop();
     }
+    
     if (!next) return getNextSentence(focusId);
 
+    lastShownIdRef.current = next.id;
     return next;
-  }, []); // Stable: No dependencies
+  }, []); 
 
   // Stable Reset Logic
   const resetCycle = useCallback((mode: 'up' | 'down', focusId: string | number | 'all') => {
@@ -388,98 +414,50 @@ const App: React.FC = () => {
     setCurrentNumber(mode === 'down' ? newLimit : 1);
   }, [getNextSentence, getNextLimit]);
 
-  // Update Data Ref and Handle Initial Load ONLY
+  // Update Data Ref
   useEffect(() => {
     allSentencesRef.current = allSentences;
-    
-    // Only auto-start if we haven't started yet.
-    // This prevents background syncs from resetting the cycle unexpectedly.
+  }, [allSentences]);
+
+  // 1. Initial Load (Data Arrival)
+  useEffect(() => {
     if (!currentSentence && allSentences.length > 0) {
         resetCycle(counterMode, sessionFocusId);
     }
   }, [allSentences, currentSentence, resetCycle, counterMode, sessionFocusId]);
 
-  // Handle Manual Configuration Changes
-  // This is split from the data effect to prevent "auto-changes"
+  // 2. Focus/Category Change -> Full Reset
   useEffect(() => {
     if (allSentencesRef.current.length > 0) {
-        // We read mode from Ref to ensure we don't need it in deps
-        // (though including it wouldn't hurt, this is safer for stability)
         resetCycle(counterModeRef.current, sessionFocusId);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countdownConfig, sessionFocusId]); // Explicitly ONLY watch these two inputs
+  }, [sessionFocusId, resetCycle]); 
 
-  // ---
-
-  // Theme Effect
+  // 3. Config Change -> Update Limit ONLY (Preserve Flow)
   useEffect(() => {
-    const root = window.document.documentElement;
-    if (theme === 'dark') root.classList.add('dark');
-    else root.classList.remove('dark');
-    localStorage.setItem('theme', theme);
-  }, [theme]);
+    const newLimit = getNextLimit();
+    setRandomLimit(newLimit);
+    // Don't change the sentence, just the counter boundaries
+    setCurrentNumber(counterModeRef.current === 'down' ? newLimit : 1);
+  }, [countdownConfig, getNextLimit]);
 
-  const toggleTheme = (e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  };
 
-  // Data Initialization
-  useEffect(() => {
-    if (!currentUser) return;
-    const init = async () => {
-      setIsSyncing(true);
-      try {
-        await refreshData();
-      } catch (e) {
-        console.error("Initialization failed:", e);
-      } finally {
-        setIsSyncing(false);
-      }
-    };
-    init();
-
-    let unsubscribe = () => {};
-    try {
-      unsubscribe = supabaseService.subscribeToChanges(
-        (sents, cats) => {
-          setAllSentences(sents);
-          setAllCategories(cats);
-        },
-        (stats) => {
-          setDailyStats(stats);
-          supabaseService.getHistoricalStats(7).then(setHistoricalStats);
-        },
-        (totalTime) => {
-            setDailyTime(prev => Math.max(prev, totalTime));
-        }
-      );
-    } catch (e) {
-      console.error("Subscription failed:", e);
-    }
-
-    return () => {
-      unsubscribe();
-    };
-  }, [currentUser, refreshData]); 
-
+  // --- INTERACTION ---
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
+    if (id === sessionFocusId) return; // Optimization: Don't reset if same category
     setSessionFocusId(id);
-    sentenceQueue.current = []; 
-    // Effect handles reset via sessionFocusId dependency
+    sentenceQueue.current = []; // Clear bag to enforce new category constraints
   };
 
   const handleInteraction = useCallback(() => {
     if (isAnimating || showStats || showManage) return;
 
-    // Use REF to get current value synchronously
     const currentVal = currentNumberRef.current;
     const mode = counterModeRef.current;
 
-    // FIX FOR IOS HAPTICS:
+    // Trigger haptic if finished
     if (mode === 'down' && currentVal <= 1) {
         triggerHaptic();
     }
@@ -491,12 +469,11 @@ const App: React.FC = () => {
     setIsAnimating(true);
     
     setTimeout(() => {
-       // Re-read stable refs
        const valNow = currentNumberRef.current;
 
        if (mode === 'down') {
          if (valNow <= 1) {
-             // Reset Logic using Refs
+             // Reset Logic
              const newLimit = getNextLimit();
              const nextSentence = getNextSentence(sessionFocusIdRef.current);
              
@@ -855,6 +832,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {/* STATS MODAL */}
       {showStats && (
         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 dark:bg-black/60 backdrop-blur-xl transition-colors duration-500">
           <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-lg flex flex-col border border-white/50 dark:border-slate-800 overflow-hidden max-h-[80vh] transition-colors duration-500">
@@ -910,6 +888,156 @@ const App: React.FC = () => {
              </div>
           </div>
         </div>
+      )}
+
+      {/* MANAGE MODAL */}
+      {showManage && (
+         <div onClick={(e) => e.stopPropagation()} className="absolute inset-0 z-30 flex items-center justify-center p-6 bg-slate-900/10 dark:bg-black/60 backdrop-blur-xl transition-colors duration-500">
+            <div className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl w-full max-w-lg flex flex-col border border-white/50 dark:border-slate-800 overflow-hidden max-h-[80vh] transition-colors duration-500">
+                <div className="p-8 pb-6 flex justify-between items-center border-b border-slate-50 dark:border-slate-800">
+                  <h2 className="text-sm font-bold tracking-[0.4em] uppercase text-slate-400 dark:text-slate-500">Manage Space</h2>
+                  <button onClick={() => { setShowManage(false); setEditingId(null); }} className="px-6 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 dark:hover:bg-slate-200 transition-all shadow-lg shadow-slate-200 dark:shadow-none">Done</button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                    
+                    {/* Add Category */}
+                    <div className="space-y-4">
+                        <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-300 dark:text-slate-600">Add Category</h3>
+                        <form onSubmit={handleAddCategory} className="flex gap-2">
+                            <input 
+                                type="text" 
+                                placeholder="New Category Name" 
+                                className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-slate-200"
+                                value={newCategory}
+                                onChange={(e) => setNewCategory(e.target.value)}
+                            />
+                            <button type="submit" className="px-4 bg-slate-200 dark:bg-slate-800 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors text-slate-600 dark:text-slate-400">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* Add Sentence */}
+                    <div className="space-y-4">
+                        <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-300 dark:text-slate-600">Add Sentence</h3>
+                        <form onSubmit={handleAddSentence} className="space-y-3">
+                            <textarea 
+                                placeholder="Enter your sentence here..." 
+                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-slate-200 resize-none h-24"
+                                value={newSentenceText}
+                                onChange={(e) => setNewSentenceText(e.target.value)}
+                            />
+                            <div className="flex flex-wrap gap-2">
+                                {allCategories.map(cat => (
+                                    <button 
+                                        key={cat.id}
+                                        type="button"
+                                        onClick={() => {
+                                            if (selectedCats.includes(cat.id)) {
+                                                setSelectedCats(selectedCats.filter(id => id !== cat.id));
+                                            } else {
+                                                setSelectedCats([...selectedCats, cat.id]);
+                                            }
+                                        }}
+                                        className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-all ${selectedCats.includes(cat.id) ? 'bg-blue-500 text-white border-blue-500' : 'bg-transparent text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-400'}`}
+                                    >
+                                        {cat.name}
+                                    </button>
+                                ))}
+                            </div>
+                            <button type="submit" className="w-full py-3 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] hover:opacity-90">
+                                Save Sentence
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* Manage List */}
+                    <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                        <div className="flex justify-between items-center">
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-300 dark:text-slate-600">Library</h3>
+                            <div className="flex items-center gap-2">
+                                <select 
+                                    className="bg-transparent text-[10px] font-bold text-slate-400 uppercase focus:outline-none text-right"
+                                    value={filterCategoryId}
+                                    onChange={(e) => setFilterCategoryId(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+                                >
+                                    <option value="all">All Cats</option>
+                                    {allCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <input 
+                            type="text" 
+                            placeholder="Search..." 
+                            className="w-full bg-slate-50 dark:bg-slate-950 border-none rounded-lg px-4 py-2 text-xs focus:ring-0 text-slate-600 dark:text-slate-400"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+
+                        <div className="space-y-3">
+                            {filteredSentences.map(s => (
+                                <div key={s.id} className="p-4 bg-slate-50 dark:bg-slate-950/50 rounded-2xl border border-slate-100 dark:border-slate-800 group">
+                                    {editingId === s.id ? (
+                                        <div className="space-y-3">
+                                            <textarea 
+                                                className="w-full bg-white dark:bg-slate-900 border border-blue-500 rounded-xl p-3 text-sm focus:outline-none dark:text-slate-200"
+                                                value={editForm.text}
+                                                onChange={(e) => setEditForm({...editForm, text: e.target.value})}
+                                            />
+                                            <div className="flex flex-wrap gap-2">
+                                                {allCategories.map(cat => (
+                                                    <button 
+                                                        key={cat.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const ids = editForm.categoryIds;
+                                                            if (ids.includes(cat.id)) {
+                                                                setEditForm({...editForm, categoryIds: ids.filter(id => id !== cat.id)});
+                                                            } else {
+                                                                setEditForm({...editForm, categoryIds: [...ids, cat.id]});
+                                                            }
+                                                        }}
+                                                        className={`px-2 py-0.5 rounded text-[9px] font-bold border ${editForm.categoryIds.includes(cat.id) ? 'bg-blue-500 text-white border-blue-500' : 'text-slate-400 border-slate-200 dark:border-slate-700'}`}
+                                                    >
+                                                        {cat.name}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => handleUpdateSentence(s.id)} className="flex-1 py-2 bg-blue-500 text-white rounded-lg text-[10px] font-bold uppercase">Save</button>
+                                                <button onClick={() => setEditingId(null)} className="px-4 py-2 bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-lg text-[10px] font-bold uppercase">Cancel</button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex justify-between items-start gap-4">
+                                            <div className="space-y-2">
+                                                <p className="text-sm font-serif italic text-slate-700 dark:text-slate-300">{s.text}</p>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {(s.categoryIds || []).map(cid => {
+                                                        const c = allCategories.find(cat => cat.id === cid);
+                                                        return c ? <span key={cid} className="text-[8px] font-bold uppercase text-slate-400 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded">{c.name}</span> : null;
+                                                    })}
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button onClick={() => handleStartEdit(s)} className="p-1.5 text-slate-400 hover:text-blue-500 transition-colors">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121(0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                                </button>
+                                                <button onClick={() => handleDeleteSentence(s.id)} className="p-1.5 text-slate-400 hover:text-red-500 transition-colors">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+         </div>
       )}
     </div>
   );
