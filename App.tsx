@@ -475,11 +475,18 @@ const App: React.FC = () => {
 
   // 3. Config Change -> Update Limit ONLY (Preserve Flow)
   useEffect(() => {
-    const newLimit = getNextLimit();
+    // FIX: Race condition resolved by using countdownConfig directly instead of Ref/getNextLimit
+    let newLimit = 3;
+    if (countdownConfig === 'random') {
+        newLimit = Math.floor(Math.random() * 7) + 1;
+    } else if (typeof countdownConfig === 'number' && countdownConfig > 0) {
+        newLimit = countdownConfig;
+    }
+    
     setRandomLimit(newLimit);
-    // Don't change the sentence, just the counter boundaries
+    // Update the counter to match the new limit immediately (if in down mode)
     setCurrentNumber(counterModeRef.current === 'down' ? newLimit : 1);
-  }, [countdownConfig, getNextLimit]);
+  }, [countdownConfig]); // Removed getNextLimit to avoid stale ref usage
 
 
   // --- INTERACTION ---
