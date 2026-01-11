@@ -256,6 +256,9 @@ const App: React.FC = () => {
 
   // Stable Limit Generator using Ref
   const getNextLimit = useCallback(() => {
+    // FIX: Use ref for random check, but we need fresh value.
+    // However, to fix "race condition" in UI input, the useEffect handles the state update.
+    // Here we can rely on `countdownConfigRef` for the action.
     const cfg = countdownConfigRef.current;
     if (cfg === 'random') {
       return Math.floor(Math.random() * 7) + 1;
@@ -433,15 +436,23 @@ const App: React.FC = () => {
     // Validate (in case sentence was deleted)
     while (next && !relevant.find(r => r.id === next?.id)) {
         if (sentenceQueue.current.length === 0) {
+            // Recurse safely: queue is empty, refill and try again
             return getNextSentence(focusId);
         }
         next = sentenceQueue.current.pop();
     }
     
-    if (!next) return getNextSentence(focusId);
+    // Fallback if recursion or logic failed (should be rare)
+    if (!next && relevant.length > 0) {
+       // Just pick random if queue logic fails completely to avoid deadlock
+       next = relevant[Math.floor(Math.random() * relevant.length)];
+    }
 
-    lastShownIdRef.current = next.id;
-    return next;
+    if (next) {
+        lastShownIdRef.current = next.id;
+    }
+    
+    return next || null;
   }, []); 
 
   // Stable Reset Logic
@@ -874,7 +885,10 @@ const App: React.FC = () => {
           </div>
         </div>
         
-        <div className={`text-4xl md:text-6xl lg:text-7xl font-serif italic text-slate-800 dark:text-slate-200 leading-[1.2] transition-all duration-700 ease-in-out ${isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0'}`}>
+        <div 
+           key={currentSentence?.id}
+           className={`text-4xl md:text-6xl lg:text-7xl font-serif italic text-slate-800 dark:text-slate-200 leading-[1.2] transition-all duration-700 ease-in-out ${isAnimating ? 'opacity-0 translate-y-2' : 'opacity-100 translate-y-0'}`}
+        >
           {currentSentence?.text || '...'}
         </div>
       </div>
