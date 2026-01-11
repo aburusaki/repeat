@@ -298,6 +298,46 @@ const App: React.FC = () => {
     setDailyTime(time);
   }, [currentUser]);
 
+  // --- RESTORED: DATA INITIALIZATION & SUBSCRIPTION ---
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const init = async () => {
+      setIsSyncing(true);
+      try {
+        await refreshData();
+      } catch (e) {
+        console.error("Initialization failed:", e);
+      } finally {
+        setIsSyncing(false);
+      }
+    };
+    init();
+
+    let unsubscribe = () => {};
+    try {
+      unsubscribe = supabaseService.subscribeToChanges(
+        (sents, cats) => {
+          setAllSentences(sents);
+          setAllCategories(cats);
+        },
+        (stats) => {
+          setDailyStats(stats);
+          supabaseService.getHistoricalStats(7).then(setHistoricalStats);
+        },
+        (totalTime) => {
+            setDailyTime(prev => Math.max(prev, totalTime));
+        }
+      );
+    } catch (e) {
+      console.error("Subscription failed:", e);
+    }
+
+    return () => {
+      unsubscribe();
+    };
+  }, [currentUser, refreshData]);
+
   // --- ACTIVITY TRACKER ---
   useEffect(() => {
     if (!currentUser) return;
