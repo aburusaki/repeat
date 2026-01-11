@@ -218,6 +218,7 @@ const App: React.FC = () => {
   const counterModeRef = useRef(counterMode);
   const allSentencesRef = useRef<Sentence[]>([]);
   const lastShownIdRef = useRef<string | number | null>(null);
+  const isAnimatingRef = useRef<boolean>(false); // NEW: Synchronous lock for interactions
 
   // Sync Refs
   useEffect(() => { currentNumberRef.current = currentNumber; }, [currentNumber]);
@@ -254,16 +255,12 @@ const App: React.FC = () => {
     return stat ? stat.count : 0;
   }, [currentSentence, dailyStats]);
 
-  // Stable Limit Generator using Ref
+  // Stable Limit Generator
   const getNextLimit = useCallback(() => {
-    // FIX: Use ref for random check, but we need fresh value.
-    // However, to fix "race condition" in UI input, the useEffect handles the state update.
-    // Here we can rely on `countdownConfigRef` for the action.
     const cfg = countdownConfigRef.current;
     if (cfg === 'random') {
       return Math.floor(Math.random() * 7) + 1;
     }
-    // Default to 3 if invalid number
     return typeof cfg === 'number' && cfg > 0 ? cfg : 3;
   }, []);
 
@@ -301,7 +298,7 @@ const App: React.FC = () => {
     setDailyTime(time);
   }, [currentUser]);
 
-  // --- RESTORED: DATA INITIALIZATION & SUBSCRIPTION ---
+  // --- DATA INITIALIZATION & SUBSCRIPTION ---
   useEffect(() => {
     if (!currentUser) return;
 
@@ -407,6 +404,7 @@ const App: React.FC = () => {
     );
 
     if (relevant.length === 0) return null;
+    if (relevant.length === 1) return relevant[0];
 
     // Refill Queue if empty
     if (sentenceQueue.current.length === 0) {
@@ -419,10 +417,11 @@ const App: React.FC = () => {
       }
 
       // Boundary Check: Prevent immediate repeat when cycle restarts
+      // We pop from the end, so index [length-1] is the next one.
       if (lastShownIdRef.current !== null && newQueue.length > 1) {
-          const nextUp = newQueue[newQueue.length - 1]; // We pop from end
+          const nextUp = newQueue[newQueue.length - 1]; 
           if (nextUp.id === lastShownIdRef.current) {
-             // Swap last item (nextUp) with first item
+             // Swap last item (nextUp) with first item (index 0)
              [newQueue[newQueue.length - 1], newQueue[0]] = [newQueue[0], newQueue[newQueue.length - 1]];
           }
       }
@@ -433,25 +432,16 @@ const App: React.FC = () => {
     // Pick next
     let next = sentenceQueue.current.pop();
     
-    // Validate (in case sentence was deleted)
+    // Validate (in case sentence was deleted mid-cycle)
     while (next && !relevant.find(r => r.id === next?.id)) {
         if (sentenceQueue.current.length === 0) {
-            // Recurse safely: queue is empty, refill and try again
+             // If we run out while filtering, force recursion to refill
             return getNextSentence(focusId);
         }
         next = sentenceQueue.current.pop();
     }
     
-    // Fallback if recursion or logic failed (should be rare)
-    if (!next && relevant.length > 0) {
-       // Just pick random if queue logic fails completely to avoid deadlock
-       next = relevant[Math.floor(Math.random() * relevant.length)];
-    }
-
-    if (next) {
-        lastShownIdRef.current = next.id;
-    }
-    
+    if (next) lastShownIdRef.current = next.id;
     return next || null;
   }, []); 
 
@@ -486,7 +476,6 @@ const App: React.FC = () => {
 
   // 3. Config Change -> Update Limit ONLY (Preserve Flow)
   useEffect(() => {
-    // FIX: Race condition resolved by using countdownConfig directly instead of Ref/getNextLimit
     let newLimit = 3;
     if (countdownConfig === 'random') {
         newLimit = Math.floor(Math.random() * 7) + 1;
@@ -495,22 +484,22 @@ const App: React.FC = () => {
     }
     
     setRandomLimit(newLimit);
-    // Update the counter to match the new limit immediately (if in down mode)
     setCurrentNumber(counterModeRef.current === 'down' ? newLimit : 1);
-  }, [countdownConfig]); // Removed getNextLimit to avoid stale ref usage
+  }, [countdownConfig]); 
 
 
   // --- INTERACTION ---
 
   const handleFocusChange = (e: React.MouseEvent, id: string | number | 'all') => {
     e.stopPropagation();
-    if (id === sessionFocusId) return; // Optimization: Don't reset if same category
+    if (id === sessionFocusId) return; 
     setSessionFocusId(id);
     sentenceQueue.current = []; // Clear bag to enforce new category constraints
   };
 
   const handleInteraction = useCallback(() => {
-    if (isAnimating || showStats || showManage) return;
+    // IMPORTANT: Check ref here for synchronous blocking
+    if (isAnimatingRef.current || showStats || showManage) return;
 
     const currentVal = currentNumberRef.current;
     const mode = counterModeRef.current;
@@ -524,6 +513,8 @@ const App: React.FC = () => {
        supabaseService.incrementStat(currentSentence.id);
     }
 
+    // Set lock immediately
+    isAnimatingRef.current = true;
     setIsAnimating(true);
     
     setTimeout(() => {
@@ -546,8 +537,9 @@ const App: React.FC = () => {
        }
        
        setIsAnimating(false);
+       isAnimatingRef.current = false; // Release lock
     }, 250);
-  }, [isAnimating, showStats, showManage, currentSentence, getNextSentence, getNextLimit, triggerHaptic]);
+  }, [showStats, showManage, currentSentence, getNextSentence, getNextLimit, triggerHaptic]);
 
   // Keyboard and Scroll Interaction Effects
   useEffect(() => {
